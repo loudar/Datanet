@@ -203,6 +203,40 @@ DIM SHARED logoy
 logox = maxx / 3
 logoy = (500 / 1920) * logox
 
+DO: LOOP UNTIL _SCREENEXISTS
+
+'Coded by Dav, JULY/2020
+'I used API information found on this page....
+'http://allapi.mentalis.org/apilist/apilist.php
+DECLARE DYNAMIC LIBRARY "user32"
+    'sets a created window region
+    'http://allapi.mentalis.org/apilist/SetWindowRgn.shtml
+    FUNCTION SetWindowRgn& (BYVAL hwnd&, BYVAL hrgn&, BYVAL bredraw%)
+END DECLARE
+
+DECLARE DYNAMIC LIBRARY "gdi32"
+    'creates a rectangular region
+    'http://allapi.mentalis.org/apilist/CreateRectRgn.shtml
+    FUNCTION CreateRectRgn& (BYVAL x1&, BYVAL y1&, BYVAL x2&, BYVAL y2&)
+    'creates an elliptical region
+    'http://allapi.mentalis.org/apilist/CreateEllipticRgn.shtml
+    FUNCTION CreateEllipticRgn& (BYVAL x1&, BYVAL y1&, BYVAL x2&, BYVAL y2&)
+    'creates a rectangular region with rounded corners
+    'http://allapi.mentalis.org/apilist/CreateRoundRectRgn.shtml
+    FUNCTION CreateRoundRectRgn& (BYVAL x1&, BYVAL y1&, BYVAL x2&, BYVAL y2&, BYVAL x3&, BYVAL y3&)
+END DECLARE
+
+hwnd& = _WINDOWHANDLE 'need the windows handle to play with it
+rounding = 30
+rgn& = CreateRoundRectRgn(7, 30, maxx, maxy, rounding, rounding)
+'Set the created region...
+try& = SetWindowRgn(hwnd&, rgn&, 0)
+'Returns zero if failed...
+IF try& = 0 THEN
+    PRINT "Failed...": END
+END IF
+
+
 SCREEN _NEWIMAGE(maxx, maxy, 32)
 PAINT (maxx / 2, maxy / 2), colour&("white")
 DO: LOOP UNTIL _SCREENEXISTS
@@ -1477,6 +1511,8 @@ SUB RunMenu (background$)
     _FONT fr&
     LOCATE 2, maxrows - LEN(version$) - 1
     PRINT version$
+    LOCATE 2, 3
+    PRINT "x"
 
     endparameter$ = ""
     maxm = i
@@ -1522,6 +1558,30 @@ SUB RunMenu (background$)
                     activei = maxm
                 END IF
         END SELECT
+        mouseinput = _MOUSEINPUT
+        mousebutton = _MOUSEBUTTON(1)
+        mousex = _MOUSEX
+        mousey = _MOUSEY
+        IF mouseinput = -1 THEN
+            IF mousebutton = -1 THEN
+                IF mousey >= fontheight AND mousey <= 2 * fontheight THEN
+                    IF mousex >= 2 * fontwidth AND mousex <= 3 * fontwidth THEN 'close button
+                        SYSTEM
+                    END IF
+                    'IF mousex >= 4 * fontwidth AND mousex <= 5 * fontwidth THEN 'minimize button
+                    '    _SCREENICON
+                    '    mousex = 0: mousey = 0
+                    'END IF
+                END IF
+                IF mousey < 3 * fontheight THEN
+                    DO
+                        mouseinput = _MOUSEINPUT
+                        mousebutton = _MOUSEBUTTON(1)
+                    LOOP UNTIL mousebutton <> -1
+                    _SCREENMOVE _DESKTOPWIDTH / 2 - (_WIDTH / 2) + (_MOUSEX - mousex), _DESKTOPHEIGHT / 2 - (_HEIGHT / 2) + (_MOUSEY - mousey)
+                END IF
+            END IF
+        END IF
         i = 0
         DO
             i = i + 1
