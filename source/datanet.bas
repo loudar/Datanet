@@ -1,5 +1,5 @@
 $EXEICON:'DN.ico'
-$RESIZE:SMOOTH
+'$RESIZE:SMOOTH
 CLS
 CLEAR
 CLOSE
@@ -124,6 +124,18 @@ DIM SHARED p2x(maxmenuitems)
 DIM SHARED p2y(maxmenuitems)
 DIM SHARED p3x(maxmenuitems)
 DIM SHARED p3y(maxmenuitems)
+DIM SHARED closebuttonlx
+DIM SHARED closebuttonux
+DIM SHARED minbuttonlx
+DIM SHARED minbuttonux
+DIM SHARED buttonsly
+DIM SHARED buttonsuy
+DIM SHARED shading
+shading = 1
+DIM SHARED UMround 'used for rounded shapes
+UMround = 4
+DIM SHARED detail
+detail = 2
 
 '=========================================================================================================== BASIC / SPECIAL STUFF =================================================================================
 
@@ -183,6 +195,7 @@ ClearMenu
 DIM SHARED windowscale
 DIM SHARED tutorial
 loadsettings
+_DELAY 0.2
 'variables
 'screens
 DIM SHARED c%
@@ -195,7 +208,10 @@ n% = _LOADIMAGE("data\bg\newpoint.jpg", 32)
 e% = _LOADIMAGE("data\bg\editpoint.jpg", 32)
 DIM SHARED maxx
 DIM SHARED maxy
-PRINT windowscale
+DIM SHARED minwinsizex
+DIM SHARED minwinsizey
+DIM SHARED currentposx
+DIM SHARED currentposy
 maxx = (_DESKTOPWIDTH / 2) * windowscale
 maxy = maxx / 16 * 9
 DIM SHARED logox
@@ -203,46 +219,51 @@ DIM SHARED logoy
 logox = maxx / 3
 logoy = (500 / 1920) * logox
 
-DO: LOOP UNTIL _SCREENEXISTS
-
-'Coded by Dav, JULY/2020
-'I used API information found on this page....
-'http://allapi.mentalis.org/apilist/apilist.php
+'Windows API calls from Wiki / Forum
+CONST SWP_NOSIZE = &H0001 'ignores cx and cy size parameters
+CONST SWP_NOMOVE = &H0002 'ignores x and y position parameters
+CONST SWP_NOZORDER = &H0004 'keeps z order and ignores hWndInsertAfter parameter
+CONST SWP_NOREDRAW = &H0008 'does not redraw window changes
+CONST SWP_NOACTIVATE = &H0010 'does not activate window
+CONST SWP_FRAMECHANGED = &H0020
+CONST SWP_SHOWWINDOW = &H0040
+CONST SWP_HIDEWINDOW = &H0080
+CONST SWP_NOCOPYBITS = &H0100
+CONST SWP_NOOWNERZORDER = &H0200
+CONST SWP_NOSENDCHANGING = &H0400
+CONST SWP_DRAWFRAME = SWP_FRAMECHANGED
+CONST SWP_NOREPOSITION = SWP_NOOWNERZORDER
+CONST SWP_DEFERERASE = &H2000
+CONST SWP_ASYNCWINDOWPOS = &H4000
+CONST HWND_TOP = 0 'window at top of z order no focus
+CONST HWND_BOTTOM = 1 'window at bottom of z order no focus
+CONST HWND_TOPMOST = -1 'window above all others no focus unless active
+CONST HWND_NOTOPMOST = -2 'window below active no focus
 DECLARE DYNAMIC LIBRARY "user32"
     'sets a created window region
-    'http://allapi.mentalis.org/apilist/SetWindowRgn.shtml
     FUNCTION SetWindowRgn& (BYVAL hwnd&, BYVAL hrgn&, BYVAL bredraw%)
+    FUNCTION SetLayeredWindowAttributes& (BYVAL hwnd AS LONG, BYVAL crKey AS LONG, BYVAL bAlpha AS _UNSIGNED _BYTE, BYVAL dwFlags AS LONG)
+    FUNCTION GetWindowLong& ALIAS "GetWindowLongA" (BYVAL hwnd AS LONG, BYVAL nIndex AS LONG)
+    FUNCTION SetWindowLong& ALIAS "SetWindowLongA" (BYVAL hwnd AS LONG, BYVAL nIndex AS LONG, BYVAL dwNewLong AS LONG)
+    FUNCTION FindWindowA%& (BYVAL lpClassName%&, BYVAL lpWindowName%&)
+    FUNCTION SetWindowPos& (BYVAL hWnd%&, BYVAL hWndInsertAfter%&, BYVAL X&, BYVAL Y&, BYVAL cx&, BYVAL cy&, BYVAL uFlags~&)
+    FUNCTION GetForegroundWindow%&
 END DECLARE
-
 DECLARE DYNAMIC LIBRARY "gdi32"
-    'creates a rectangular region
-    'http://allapi.mentalis.org/apilist/CreateRectRgn.shtml
     FUNCTION CreateRectRgn& (BYVAL x1&, BYVAL y1&, BYVAL x2&, BYVAL y2&)
-    'creates an elliptical region
-    'http://allapi.mentalis.org/apilist/CreateEllipticRgn.shtml
     FUNCTION CreateEllipticRgn& (BYVAL x1&, BYVAL y1&, BYVAL x2&, BYVAL y2&)
-    'creates a rectangular region with rounded corners
-    'http://allapi.mentalis.org/apilist/CreateRoundRectRgn.shtml
     FUNCTION CreateRoundRectRgn& (BYVAL x1&, BYVAL y1&, BYVAL x2&, BYVAL y2&, BYVAL x3&, BYVAL y3&)
 END DECLARE
+DECLARE DYNAMIC LIBRARY "kernel32"
+    FUNCTION GetLastError~& ()
+END DECLARE
 
-hwnd& = _WINDOWHANDLE 'need the windows handle to play with it
-rounding = 30
-rgn& = CreateRoundRectRgn(7, 30, maxx, maxy, rounding, rounding)
-'Set the created region...
-try& = SetWindowRgn(hwnd&, rgn&, 0)
-'Returns zero if failed...
-IF try& = 0 THEN
-    PRINT "Failed...": END
-END IF
-
-
-SCREEN _NEWIMAGE(maxx, maxy, 32)
-PAINT (maxx / 2, maxy / 2), colour&("white")
-DO: LOOP UNTIL _SCREENEXISTS
+DIM SHARED rounding: rounding = 30
+DIM SHARED topbarheight: topbarheight = 54 'same as logo height
+DIM SHARED maximized
 _TITLE "DATANET"
 DIM SHARED version$: version$ = "Version 0.3 - unstable"
-_SCREENMOVE (_DESKTOPWIDTH / 2) - (maxx / 2), (_DESKTOPHEIGHT / 2) - (maxy / 2)
+createBigWindow
 
 fontheight = 16
 fontfilej$ = "data\bg\katakana.ttf"
@@ -1508,11 +1529,32 @@ SUB RunMenu (background$)
         PRINT "ALL SYSTEMS OPERATIONAL"
     END IF
 
+    closebuttonlx = (maxrows - 5) * fontwidth
+    closebuttonux = maxx - (fontwidth * 2)
+    minbuttonlx = (maxrows - 8) * fontwidth
+    minbuttonux = closebuttonlx
+    buttonsly = 0.5 * fontheight
+    buttonsuy = fontheight * 2
+    rectangle minbuttonlx, buttonsly, closebuttonux, buttonsuy, UMround, colour&("fg"), "B"
+    LINE (minbuttonux, buttonsly)-(minbuttonux, buttonsuy), colour&("fg")
+    factor = 3
+    'close button
+    LINE (closebuttonlx + ((closebuttonux - closebuttonlx) / factor), buttonsly + ((buttonsuy - buttonsly) / factor))-(closebuttonux - ((closebuttonux - closebuttonlx) / factor), buttonsuy - ((buttonsuy - buttonsly) / factor)), colour&("fg")
+    LINE (closebuttonlx + ((closebuttonux - closebuttonlx) / factor) + 1, buttonsly + ((buttonsuy - buttonsly) / factor))-(closebuttonux - ((closebuttonux - closebuttonlx) / factor) + 1, buttonsuy - ((buttonsuy - buttonsly) / factor)), colour&("fg")
+    LINE (closebuttonlx + ((closebuttonux - closebuttonlx) / factor) - 1, buttonsly + ((buttonsuy - buttonsly) / factor))-(closebuttonux - ((closebuttonux - closebuttonlx) / factor) - 1, buttonsuy - ((buttonsuy - buttonsly) / factor)), colour&("fg")
+    LINE (closebuttonlx + ((closebuttonux - closebuttonlx) / factor) - 2, buttonsly + ((buttonsuy - buttonsly) / factor))-(closebuttonux - ((closebuttonux - closebuttonlx) / factor) - 2, buttonsuy - ((buttonsuy - buttonsly) / factor)), colour&("fg")
+    LINE (closebuttonlx + ((closebuttonux - closebuttonlx) / factor) - 3, buttonsly + ((buttonsuy - buttonsly) / factor))-(closebuttonux - ((closebuttonux - closebuttonlx) / factor) - 3, buttonsuy - ((buttonsuy - buttonsly) / factor)), colour&("fg")
+    LINE (closebuttonlx + ((closebuttonux - closebuttonlx) / factor), buttonsuy - ((buttonsuy - buttonsly) / factor))-(closebuttonux - ((closebuttonux - closebuttonlx) / factor), buttonsly + ((buttonsuy - buttonsly) / factor)), colour&("fg")
+    LINE (closebuttonlx + ((closebuttonux - closebuttonlx) / factor) + 1, buttonsuy - ((buttonsuy - buttonsly) / factor))-(closebuttonux - ((closebuttonux - closebuttonlx) / factor) + 1, buttonsly + ((buttonsuy - buttonsly) / factor)), colour&("fg")
+    LINE (closebuttonlx + ((closebuttonux - closebuttonlx) / factor) - 1, buttonsuy - ((buttonsuy - buttonsly) / factor))-(closebuttonux - ((closebuttonux - closebuttonlx) / factor) - 1, buttonsly + ((buttonsuy - buttonsly) / factor)), colour&("fg")
+    LINE (closebuttonlx + ((closebuttonux - closebuttonlx) / factor) - 2, buttonsuy - ((buttonsuy - buttonsly) / factor))-(closebuttonux - ((closebuttonux - closebuttonlx) / factor) - 2, buttonsly + ((buttonsuy - buttonsly) / factor)), colour&("fg")
+    LINE (closebuttonlx + ((closebuttonux - closebuttonlx) / factor) - 3, buttonsuy - ((buttonsuy - buttonsly) / factor))-(closebuttonux - ((closebuttonux - closebuttonlx) / factor) - 3, buttonsly + ((buttonsuy - buttonsly) / factor)), colour&("fg")
+    'minimize button
+    LINE (minbuttonlx + ((minbuttonux - minbuttonlx) / factor), buttonsuy - ((buttonsuy - buttonsly) / factor))-(minbuttonux - ((minbuttonux - minbuttonlx) / factor), buttonsuy - ((buttonsuy - buttonsly) / factor) + 2), colour&("fg"), BF
+
     _FONT fr&
-    LOCATE 2, maxrows - LEN(version$) - 1
+    LOCATE 4, maxrows - LEN(version$) - 1
     PRINT version$
-    LOCATE 2, 3
-    PRINT "x"
 
     endparameter$ = ""
     maxm = i
@@ -1564,21 +1606,26 @@ SUB RunMenu (background$)
         mousey = _MOUSEY
         IF mouseinput = -1 THEN
             IF mousebutton = -1 THEN
-                IF mousey >= fontheight AND mousey <= 2 * fontheight THEN
-                    IF mousex >= 2 * fontwidth AND mousex <= 3 * fontwidth THEN 'close button
+                IF mousey >= buttonsly AND mousey <= buttonsuy THEN 'close button
+                    IF mousex >= closebuttonlx AND mousex <= closebuttonux THEN
                         SYSTEM
                     END IF
-                    'IF mousex >= 4 * fontwidth AND mousex <= 5 * fontwidth THEN 'minimize button
-                    '    _SCREENICON
-                    '    mousex = 0: mousey = 0
-                    'END IF
+                    IF mousex >= minbuttonlx AND mousex <= minbuttonux THEN 'minimize button
+                        minimize
+                        IF maximized = 1 THEN
+                            change = 1
+                            GOTO reprintmenu
+                        END IF
+                    END IF
                 END IF
-                IF mousey < 3 * fontheight THEN
+                IF mousey < topbarheight THEN
                     DO
                         mouseinput = _MOUSEINPUT
                         mousebutton = _MOUSEBUTTON(1)
                     LOOP UNTIL mousebutton <> -1
-                    _SCREENMOVE _DESKTOPWIDTH / 2 - (_WIDTH / 2) + (_MOUSEX - mousex), _DESKTOPHEIGHT / 2 - (_HEIGHT / 2) + (_MOUSEY - mousey)
+                    _SCREENMOVE currentposx + (_MOUSEX - mousex), currentposy + (_MOUSEY - mousey)
+                    currentposx = currentposx + (_MOUSEX - mousex)
+                    currentposy = currentposy + (_MOUSEY - mousey)
                 END IF
             END IF
         END IF
@@ -2605,28 +2652,28 @@ FUNCTION colour& (name$)
 END FUNCTION
 
 FUNCTION resized
-    IF _RESIZE = -1 THEN
-        maxx = _RESIZEWIDTH
-        IF maxx < 1280 THEN
-            maxx = 1280
-        END IF
-        maxy = maxx / 16 * 9
-        SCREEN _NEWIMAGE(maxx, maxy, 32)
-        logox = maxx / 3
-        logoy = (500 / 1920) * logox
-        maxrows = INT(maxx / fontwidth)
-        maxlines = INT(maxy / fontheight) - 4
-        firstline = INT(120 / fontheight)
-        xcharacter = INT((maxx / 2.7) / fontwidth)
-        twidth = maxx / 1.5
-        theight = twidth / 2
-        centerwindow
-        COLOR colour&("fg"), colour&("bg")
-        CLS
-        resized = 1
-    ELSE
-        resized = 0
-    END IF
+    'IF _RESIZE = -1 THEN
+    '    maxx = _RESIZEWIDTH
+    '    IF maxx < 1280 THEN
+    '        maxx = 1280
+    '    END IF
+    '    maxy = maxx / 16 * 9
+    '    SCREEN _NEWIMAGE(maxx, maxy, 32)
+    '    logox = maxx / 3
+    '    logoy = (500 / 1920) * logox
+    '    maxrows = INT(maxx / fontwidth)
+    '    maxlines = INT(maxy / fontheight) - 4
+    '    firstline = INT(120 / fontheight)
+    '    xcharacter = INT((maxx / 2.7) / fontwidth)
+    '    twidth = maxx / 1.5
+    '    theight = twidth / 2
+    '    centerwindow
+    '    COLOR colour&("fg"), colour&("bg")
+    '    CLS
+    '    resized = 1
+    'ELSE
+    '    resized = 0
+    'END IF
 END FUNCTION
 
 SUB centerwindow
@@ -2634,25 +2681,229 @@ SUB centerwindow
 END SUB
 
 SUB resizeWindow
-    maxx = (_DESKTOPWIDTH / 2) * windowscale
-    maxy = maxx / 16 * 9
-    logox = maxx / 3
-    logoy = (500 / 1920) * logox
+    'maxx = (_DESKTOPWIDTH / 2) * windowscale
+    'maxy = maxx / 16 * 9
+    'logox = maxx / 3
+    'logoy = (500 / 1920) * logox
 
+    'SCREEN _NEWIMAGE(maxx, maxy, 32)
+    'DO: LOOP UNTIL _SCREENEXISTS
+    '_TITLE "DATANET"
+    '_SCREENMOVE (_DESKTOPWIDTH / 2) - (maxx / 2), (_DESKTOPHEIGHT / 2) - (maxy / 2)
+
+    '_FONT fr&
+    'fontwidth = _FONTWIDTH(fr&)
+    'maxrows = INT(maxx / fontwidth)
+    'maxlines = INT(maxy / fontheight) - 4
+    'firstline = INT(120 / fontheight)
+    'xcharacter = INT((maxx / 2.7) / fontwidth)
+
+    'twidth = maxx / 1.5
+    'theight = twidth / 2
+END SUB
+
+SUB minimize
+    minwinsizex = 35 * fontwidth
+    minwinsizey = fontheight * 4
+    createSmallWindow
+    COLOR colour&("fg"), colour&("bg")
+    CLS
+    closebuttonlx = minwinsizex - (4 * fontwidth)
+    closebuttonux = minwinsizex - (fontwidth)
+    minbuttonlx = minwinsizex - (7 * fontwidth)
+    minbuttonux = closebuttonlx
+    buttonsly = 0.5 * fontheight
+    buttonsuy = fontheight * 2
+    factor = 3
+    rectangle minbuttonlx, buttonsly, closebuttonux, buttonsuy, UMround, colour&("black"), "B"
+    LINE (closebuttonlx, buttonsly)-(closebuttonlx, buttonsuy), colour&("fg")
+    'close button
+    LINE (closebuttonlx + ((closebuttonux - closebuttonlx) / factor), buttonsly + ((buttonsuy - buttonsly) / factor))-(closebuttonux - ((closebuttonux - closebuttonlx) / factor), buttonsuy - ((buttonsuy - buttonsly) / factor)), colour&("fg")
+    LINE (closebuttonlx + ((closebuttonux - closebuttonlx) / factor) + 1, buttonsly + ((buttonsuy - buttonsly) / factor))-(closebuttonux - ((closebuttonux - closebuttonlx) / factor) + 1, buttonsuy - ((buttonsuy - buttonsly) / factor)), colour&("fg")
+    LINE (closebuttonlx + ((closebuttonux - closebuttonlx) / factor) - 1, buttonsly + ((buttonsuy - buttonsly) / factor))-(closebuttonux - ((closebuttonux - closebuttonlx) / factor) - 1, buttonsuy - ((buttonsuy - buttonsly) / factor)), colour&("fg")
+    LINE (closebuttonlx + ((closebuttonux - closebuttonlx) / factor) - 2, buttonsly + ((buttonsuy - buttonsly) / factor))-(closebuttonux - ((closebuttonux - closebuttonlx) / factor) - 2, buttonsuy - ((buttonsuy - buttonsly) / factor)), colour&("fg")
+    LINE (closebuttonlx + ((closebuttonux - closebuttonlx) / factor) - 3, buttonsly + ((buttonsuy - buttonsly) / factor))-(closebuttonux - ((closebuttonux - closebuttonlx) / factor) - 3, buttonsuy - ((buttonsuy - buttonsly) / factor)), colour&("fg")
+    LINE (closebuttonlx + ((closebuttonux - closebuttonlx) / factor), buttonsuy - ((buttonsuy - buttonsly) / factor))-(closebuttonux - ((closebuttonux - closebuttonlx) / factor), buttonsly + ((buttonsuy - buttonsly) / factor)), colour&("fg")
+    LINE (closebuttonlx + ((closebuttonux - closebuttonlx) / factor) + 1, buttonsuy - ((buttonsuy - buttonsly) / factor))-(closebuttonux - ((closebuttonux - closebuttonlx) / factor) + 1, buttonsly + ((buttonsuy - buttonsly) / factor)), colour&("fg")
+    LINE (closebuttonlx + ((closebuttonux - closebuttonlx) / factor) - 1, buttonsuy - ((buttonsuy - buttonsly) / factor))-(closebuttonux - ((closebuttonux - closebuttonlx) / factor) - 1, buttonsly + ((buttonsuy - buttonsly) / factor)), colour&("fg")
+    LINE (closebuttonlx + ((closebuttonux - closebuttonlx) / factor) - 2, buttonsuy - ((buttonsuy - buttonsly) / factor))-(closebuttonux - ((closebuttonux - closebuttonlx) / factor) - 2, buttonsly + ((buttonsuy - buttonsly) / factor)), colour&("fg")
+    LINE (closebuttonlx + ((closebuttonux - closebuttonlx) / factor) - 3, buttonsuy - ((buttonsuy - buttonsly) / factor))-(closebuttonux - ((closebuttonux - closebuttonlx) / factor) - 3, buttonsly + ((buttonsuy - buttonsly) / factor)), colour&("fg")
+    'maximize button
+    LINE (minbuttonlx + ((minbuttonux - minbuttonlx) / factor), buttonsuy - ((buttonsuy - buttonsly) / factor))-(minbuttonux - ((minbuttonux - minbuttonlx) / factor), buttonsly + ((buttonsuy - buttonsly) / factor)), colour&("fg"), B
+    LINE (minbuttonlx + ((minbuttonux - minbuttonlx) / factor), buttonsuy - ((buttonsuy - buttonsly) / factor))-(minbuttonux - ((minbuttonux - minbuttonlx) / factor), buttonsly + ((buttonsuy - buttonsly) / factor) + 1), colour&("fg"), B
+    LOCATE 2, 3
+    PRINT LTRIM$(STR$(maxnodes)); " NODES"
+    SELECT CASE maxnodes / nodelimit
+        CASE IS < 0.25
+            LINE ((8 + LEN(LTRIM$(STR$(maxnodes)))) * fontwidth, 1 * fontheight + 2)-((23 + LEN(LTRIM$(STR$(maxnodes)))) * fontwidth, 2 * fontheight - 2), colour&("green"), B
+            LINE ((8 + LEN(LTRIM$(STR$(maxnodes)))) * fontwidth, 1 * fontheight + 2)-((8 + LEN(LTRIM$(STR$(maxnodes))) + (15 * (maxnodes / nodelimit))) * fontwidth, 2 * fontheight - 2), colour&("green"), BF
+        CASE IS < 0.5
+            LINE ((8 + LEN(LTRIM$(STR$(maxnodes)))) * fontwidth, 1 * fontheight + 2)-((23 + LEN(LTRIM$(STR$(maxnodes)))) * fontwidth, 2 * fontheight - 2), colour&("yellow"), B
+            LINE ((8 + LEN(LTRIM$(STR$(maxnodes)))) * fontwidth, 1 * fontheight + 2)-((8 + LEN(LTRIM$(STR$(maxnodes))) + (15 * (maxnodes / nodelimit))) * fontwidth, 2 * fontheight - 2), colour&("yellow"), BF
+        CASE IS < 0.75
+            LINE ((8 + LEN(LTRIM$(STR$(maxnodes)))) * fontwidth, 1 * fontheight + 2)-((23 + LEN(LTRIM$(STR$(maxnodes)))) * fontwidth, 2 * fontheight - 2), colour&("orange"), B
+            LINE ((8 + LEN(LTRIM$(STR$(maxnodes)))) * fontwidth, 1 * fontheight + 2)-((8 + LEN(LTRIM$(STR$(maxnodes))) + (15 * (maxnodes / nodelimit))) * fontwidth, 2 * fontheight - 2), colour&("orange"), BF
+        CASE IS < 1
+            LINE ((8 + LEN(LTRIM$(STR$(maxnodes)))) * fontwidth, 1 * fontheight + 2)-((23 + LEN(LTRIM$(STR$(maxnodes)))) * fontwidth, 2 * fontheight - 2), colour&("orange"), B
+            LINE ((8 + LEN(LTRIM$(STR$(maxnodes)))) * fontwidth, 1 * fontheight + 2)-((8 + LEN(LTRIM$(STR$(maxnodes))) + (15 * (maxnodes / nodelimit))) * fontwidth, 2 * fontheight - 2), colour&("orange"), BF
+    END SELECT
+    'LOCATE 3, 3
+    'PRINT "ALL SYSTEMS OPERATIONAL"
+
+    DO
+        mouseinput = _MOUSEINPUT
+    LOOP UNTIL _MOUSEX < minbuttonlx OR _MOUSEY > buttonsuy
+    maximized = 0
+    DO
+        mouseinput = _MOUSEINPUT
+        mousebutton = _MOUSEBUTTON(1)
+        mousex = _MOUSEX
+        mousey = _MOUSEY
+        IF mouseinput = -1 THEN
+            IF mousebutton = -1 THEN
+                IF mousey >= buttonsly AND mousey <= buttonsuy THEN 'close button
+                    IF mousex >= closebuttonlx AND mousex <= closebuttonux THEN
+                        SYSTEM
+                    END IF
+                    IF mousex >= minbuttonlx AND mousex <= minbuttonux THEN 'maximize button
+                        maximized = 1
+                    END IF
+                END IF
+                DO
+                    mouseinput = _MOUSEINPUT
+                    mousebutton = _MOUSEBUTTON(1)
+                    mousex2 = _MOUSEX
+                    mousey2 = _MOUSEY
+                    IF mousex2 <> mousex OR mousey2 <> mousey THEN
+                        _SCREENMOVE currentposx + (mousex2 - mousex), currentposy + (mousey2 - mousey)
+                        currentposx = currentposx + (mousex2 - mousex)
+                        currentposy = currentposy + (mousey2 - mousey)
+                    END IF
+                    mousex = _MOUSEX
+                    mousey = _MOUSEY
+                LOOP UNTIL mousebutton <> -1
+            END IF
+        END IF
+    LOOP UNTIL maximized = 1
+    createBigWindow
+END SUB
+
+SUB SetWindowOpacity (hWnd AS LONG, Level)
+    DIM Msg AS LONG
+    CONST G = -20
+    CONST LWA_ALPHA = &H2
+    CONST WS_EX_LAYERED = &H80000
+    Msg = GetWindowLong(hWnd, G)
+    Msg = Msg OR WS_EX_LAYERED
+    Crap = SetWindowLong(hWnd, G, Msg)
+    Crap = SetLayeredWindowAttributes(hWnd, 0, Level, LWA_ALPHA)
+END SUB
+
+SUB createBigWindow
     SCREEN _NEWIMAGE(maxx, maxy, 32)
+    'PAINT (maxx / 2, maxy / 2), colour&("bg")
     DO: LOOP UNTIL _SCREENEXISTS
-    _TITLE "DATANET"
+    _DEST 0
+    hwnd& = _WINDOWHANDLE
+    SetWindowOpacity hwnd&, 245
+    IF 0 = SetWindowPos(hwnd&, HWND_TOPMOST, 200, 200, 0, 0, SWP_NOSIZE OR SWP_NOACTIVATE) THEN
+        PRINT "SetWindowPos failed. 0x" + LCASE$(HEX$(GetLastError))
+    END IF
+    x%& = GetForegroundWindow%&
+    IF hwnd& <> x%& THEN _SCREENCLICK 240, 240
+    rgn& = CreateRoundRectRgn(7, 30, maxx, maxy, rounding, rounding)
+    try& = SetWindowRgn(hwnd&, rgn&, 0)
     _SCREENMOVE (_DESKTOPWIDTH / 2) - (maxx / 2), (_DESKTOPHEIGHT / 2) - (maxy / 2)
+    currentposx = (_DESKTOPWIDTH / 2) - (maxx / 2)
+    currentposy = (_DESKTOPHEIGHT / 2) - (maxy / 2)
+END SUB
 
-    _FONT fr&
-    fontwidth = _FONTWIDTH(fr&)
-    maxrows = INT(maxx / fontwidth)
-    maxlines = INT(maxy / fontheight) - 4
-    firstline = INT(120 / fontheight)
-    xcharacter = INT((maxx / 2.7) / fontwidth)
+SUB createSmallWindow
+    SCREEN _NEWIMAGE(minwinsizex, minwinsizey, 32)
+    'PAINT (maxx / 2, maxy / 2), colour&("bg")
+    DO: LOOP UNTIL _SCREENEXISTS
+    _DEST 0
+    hwnd& = _WINDOWHANDLE
+    SetWindowOpacity hwnd&, 245
+    IF 0 = SetWindowPos(hwnd&, HWND_TOPMOST, 200, 200, 0, 0, SWP_NOSIZE OR SWP_NOACTIVATE) THEN
+        PRINT "SetWindowPos failed. 0x" + LCASE$(HEX$(GetLastError))
+    END IF
+    x%& = GetForegroundWindow%&
+    IF hwnd& <> x%& THEN _SCREENCLICK 240, 240
+    rgn& = CreateRoundRectRgn(7, 30, minwinsizex + 7, minwinsizey + 30, rounding, rounding)
+    try& = SetWindowRgn(hwnd&, rgn&, 0)
+    _SCREENMOVE -7, _DESKTOPHEIGHT - 70 - minwinsizey
+    currentposx = 0
+    currentposy = _DESKTOPHEIGHT - 70 - minwinsizey
+END SUB
 
-    twidth = maxx / 1.5
-    theight = twidth / 2
+SUB rectangle (lx, ly, ux, uy, round, clr&, outline$)
+    SELECT CASE outline$
+        CASE "BF"
+            rectangleoutline lx, ly, ux, uy, round, clr&
+            PAINT (lx + ((ux - lx) / 2), ly + ((uy - ly) / 2)), clr&, clr&
+            IF shading = 1 THEN
+                IF clr& = colour&("white") THEN
+                    shader& = _RGBA(0, 0, 0, 80)
+                ELSE
+                    IF colour&("bg") <> colour&("white") THEN
+                        shader& = colour&("white")
+                    ELSE
+                        shader& = _RGBA(0, 0, 0, 80)
+                    END IF
+                END IF
+                'top right
+                x = -0.25 * _PI
+                DO: x = x + ((0.25 * _PI) / round / detail)
+                    PSET ((lx + round) + (SIN(x) * round), (ly + round) - (COS(x) * round)), shader&
+                LOOP UNTIL x >= 0
+                x = -0.5 * _PI
+                DO: x = x + ((0.5 * _PI) / round / detail)
+                    PSET ((ux - round) - (SIN(x) * round), (ly + round) - (COS(x) * round)), shader&
+                LOOP UNTIL x >= 0
+                x = -0.5 * _PI
+                DO: x = x + ((0.25 * _PI) / round / detail)
+                    PSET ((ux - round) - (SIN(x) * round), (uy - round) + (COS(x) * round)), shader&
+                LOOP UNTIL x >= -0.25
+                LINE (lx + round, ly)-(ux - round, ly), shader&
+                LINE (ux, ly + round)-(ux, uy - round), shader&
+            END IF
+        CASE "B"
+            rectangleoutline lx, ly, ux, uy, round, clr&
+    END SELECT
+END SUB
+
+SUB rectangleoutline (lx, ly, ux, uy, round, clr&)
+    IF round > 0 THEN
+        '           corners:
+        'lx-ly
+        x = -0.5 * _PI
+        DO: x = x + ((0.5 * _PI) / round / detail)
+            PSET ((lx + round) + (SIN(x) * round), (ly + round) - (COS(x) * round)), clr&
+        LOOP UNTIL x >= 0
+        'lx-uy
+        x = -0.5 * _PI
+        DO: x = x + ((0.5 * _PI) / round / detail)
+            PSET ((lx + round) + (SIN(x) * round), (uy - round) + (COS(x) * round)), clr&
+        LOOP UNTIL x >= 0
+        'ux-ly
+        x = -0.5 * _PI
+        DO: x = x + ((0.5 * _PI) / round / detail)
+            PSET ((ux - round) - (SIN(x) * round), (ly + round) - (COS(x) * round)), clr&
+        LOOP UNTIL x >= 0
+        'ux-uy
+        x = -0.5 * _PI
+        DO: x = x + ((0.5 * _PI) / round / detail)
+            PSET ((ux - round) - (SIN(x) * round), (uy - round) + (COS(x) * round)), clr&
+        LOOP UNTIL x >= 0
+        '           lines:
+        LINE (lx + round, ly)-(ux - round, ly), clr&
+        LINE (lx + round, uy)-(ux - round, uy), clr&
+        LINE (lx, ly + round)-(lx, uy - round), clr&
+        LINE (ux, ly + round)-(ux, uy - round), clr&
+    ELSE
+        LINE (lx, ly)-(ux, uy), clr&, B
+    END IF
 END SUB
 
 'FUNCTION GetOpenFileName$ (Title$, InitialDir$, Filter$, FilterIndex, Flags&, hWnd&)
