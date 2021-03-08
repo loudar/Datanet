@@ -1,5 +1,6 @@
 REM $DYNAMIC
 SCREEN _NEWIMAGE(1920, 1080, 32)
+_SCREENMOVE (_DESKTOPWIDTH / 2) - (_WIDTH(0) / 2), (_DESKTOPHEIGHT / 2) - (_HEIGHT(0) / 2)
 
 'file list by SMcNeill
 DECLARE CUSTOMTYPE LIBRARY "code\direntry"
@@ -13,6 +14,7 @@ REDIM Dir(0) AS STRING, File(0) AS STRING
 'Variables
 TYPE internalsettings
     trimstrings AS _BYTE
+    fps AS INTEGER
 END TYPE
 TYPE internal
     setting AS internalsettings
@@ -55,11 +57,18 @@ TYPE rectangle
 END TYPE
 
 resetallvalues
-loadui
-CLS
 
+'------------- TESTING AREA ------------
+
+
+
+'-------------- MAIN AREA --------------
+
+loadui
 DO
+    CLS
     displayview 1
+    _LIMIT internal.setting.fps
 LOOP
 SLEEP
 
@@ -76,13 +85,16 @@ SUB checkelement (this AS element, arguments AS STRING)
 END SUB
 
 SUB displayview (dview AS INTEGER)
-    resetsum
     SELECT CASE dview
         CASE 1
-            DO: e = e + 1
-                displayelement element(e), ""
-            LOOP UNTIL e = UBOUND(element)
+            IF UBOUND(element) > 0 THEN
+                DO: e = e + 1
+                    displayelement element(e), ""
+                LOOP UNTIL e = UBOUND(element)
+            END IF
     END SELECT
+    resetsum
+    _DISPLAY
 END SUB
 
 SUB displayelement (this AS element, arguments AS STRING) 'parses abstract coordinates into discrete coordinates
@@ -113,13 +125,13 @@ SUB displayelement (this AS element, arguments AS STRING) 'parses abstract coord
         END IF
 
         LOCATE 1
-        PRINT this.type, x, y, w, h
+        PRINT x, y, w, h
 
         SELECT CASE this.type
             CASE "button"
-                rectangle "x=" + lst$(x) + ",y=" + lst$(y) + ",w=" + lst$(w) + ",h=" + lst$(h) + ",color=" + this.color + ",style=" + this.style
+                rectangle "x=" + lst$(x) + ";y=" + lst$(y) + ";w=" + lst$(w) + ";h=" + lst$(h) + ";color=" + this.color + ";style=" + this.style
             CASE "input"
-                rectangle "x=" + lst$(x) + ",y=" + lst$(y) + ",w=" + lst$(w) + ",h=" + lst$(h) + ",color=" + this.color + ",style=" + this.style
+                rectangle "x=" + lst$(x) + ";y=" + lst$(y) + ";w=" + lst$(w) + ";h=" + lst$(h) + ";color=" + this.color + ";style=" + this.style
         END SELECT
     END IF
 END SUB
@@ -146,6 +158,7 @@ FUNCTION findsum (arguments AS STRING, addvalue AS _FLOAT)
         uisum(sumfound).y = uisum(sumfound).y + global.margin + addvalue
         uisum(sumfound).f = "x"
         findsum = uisum(sumfound).y - addvalue
+        EXIT FUNCTION
     ELSEIF checksumy > 0 THEN
         IF UBOUND(uisum) > 0 THEN
             DO: u = u + 1
@@ -164,13 +177,22 @@ FUNCTION findsum (arguments AS STRING, addvalue AS _FLOAT)
         uisum(sumfound).x = uisum(sumfound).x + global.margin + addvalue
         uisum(sumfound).y = checksumy
         uisum(sumfound).f = "y"
-        findsum = uisum(sumfound).y - addvalue
+        findsum = uisum(sumfound).x - addvalue
+        EXIT FUNCTION
     ELSE
         findsum = global.margin
+        EXIT FUNCTION
     END IF
 END FUNCTION
 
-SUB resetsum
+SUB resetsum 'explicitly doesn't use REDIM because that bugs out
+    IF UBOUND(uisum) > 0 THEN
+        DO: u = u + 1
+            uisum(u).x = 0
+            uisum(u).y = 0
+            uisum(u).f = ""
+        LOOP UNTIL u = UBOUND(uisum)
+    END IF
     REDIM uisum(0) AS uisum
 END SUB
 
@@ -208,24 +230,28 @@ SUB loadui
         viewfile$ = global.internalpath + "\" + lst$(lview) + ".dui"
         IF _FILEEXISTS(viewfile$) THEN
             OPEN viewfile$ FOR INPUT AS #freen
-            INPUT #freen, uielement$
+            IF EOF(freen) = 0 THEN
+                DO
+                    INPUT #freen, uielement$
 
-            REDIM _PRESERVE element(UBOUND(element) + 1) AS element
-            eub = UBOUND(element)
-            element(eub).type = getargument$(uielement$, "type")
-            element(eub).name = getargument$(uielement$, "name")
-            element(eub).x = getargument$(uielement$, "x")
-            element(eub).y = getargument$(uielement$, "y")
-            element(eub).w = getargument$(uielement$, "w")
-            element(eub).h = getargument$(uielement$, "h")
-            element(eub).color = getargument$(uielement$, "color")
-            element(eub).style = getargument$(uielement$, "style")
-            element(eub).view = -1
-
+                    REDIM _PRESERVE element(UBOUND(element) + 1) AS element
+                    eub = UBOUND(element)
+                    element(eub).type = getargument$(uielement$, "type")
+                    element(eub).name = getargument$(uielement$, "name")
+                    element(eub).x = getargument$(uielement$, "x")
+                    element(eub).y = getargument$(uielement$, "y")
+                    element(eub).w = getargument$(uielement$, "w")
+                    element(eub).h = getargument$(uielement$, "h")
+                    element(eub).color = getargument$(uielement$, "color")
+                    element(eub).style = getargument$(uielement$, "style")
+                    element(eub).text = getargument$(uielement$, "text")
+                    element(eub).view = -1
+                LOOP UNTIL EOF(freen)
+            END IF
             CLOSE #freen
+            PRINT "Successfully loaded UI for view " + lst$(lview) + "!"
         ELSE
             PRINT "Error loading UI for view " + lst$(lview)
-            _DELAY 2
         END IF
     LOOP UNTIL lview = 3
 END SUB
@@ -233,6 +259,7 @@ END SUB
 SUB resetallvalues
     'internal settings
     internal.setting.trimstrings = -1
+    internal.setting.fps = 2
 
     'data structure
     global.internalpath = "internal"
@@ -313,9 +340,9 @@ END FUNCTION
 
 FUNCTION stringvalue$ (basestring AS STRING, argument AS STRING)
     IF LEN(basestring) > 0 THEN
-        DO: p = p + 1
+        p = 1: DO
             IF MID$(basestring, p, LEN(argument)) = argument THEN
-                endpos = INSTR(p + LEN(argument), basestring, ",")
+                endpos = INSTR(p + LEN(argument), basestring, ";")
                 IF endpos = 0 THEN endpos = LEN(basestring) ELSE endpos = endpos - 1 'means that no comma has been found. taking the entire rest of the string as argument value.
 
                 startpos = INSTR(p + LEN(argument), basestring, "=")
@@ -327,11 +354,15 @@ FUNCTION stringvalue$ (basestring AS STRING, argument AS STRING)
 
                 IF internal.setting.trimstrings = -1 THEN
                     stringvalue$ = LTRIM$(RTRIM$(MID$(basestring, startpos, endpos - startpos + 1)))
+                    EXIT FUNCTION
                 ELSE
                     stringvalue$ = MID$(basestring, startpos, endpos - startpos + 1)
+                    EXIT FUNCTION
                 END IF
             END IF
-        LOOP UNTIL p = LEN(basestring)
+            finder = INSTR(p + 1, basestring, ";") + 1
+            IF finder > 1 THEN p = finder ELSE stringvalue$ = "": EXIT FUNCTION
+        LOOP UNTIL p >= LEN(basestring)
     END IF
 END FUNCTION
 
@@ -347,7 +378,7 @@ SUB rectangle (arguments AS STRING) 'lx, ly, ux, uy, round, clr&, outline$
         round = VAL(round$)
     END IF
     clr& = col&(getargument$(arguments, "color"))
-    SELECT CASE getargument$(arguments, "style")
+    SELECT CASE UCASE$(getargument$(arguments, "style"))
         CASE "BF"
             rectangleoutline lx, ly, ux, uy, round, clr&
             PAINT (lx + ((ux - lx) / 2), ly + ((uy - ly) / 2)), clr&, clr&
