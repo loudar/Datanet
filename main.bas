@@ -22,11 +22,18 @@ END TYPE
 REDIM SHARED internal AS internal
 
 TYPE global
-    AS STRING nodepath, internalpath
+    AS STRING nodepath, internalpath, skinpath
     AS _UNSIGNED _INTEGER64 maxnodeid
-    AS _FLOAT margin, round
+    AS _FLOAT margin, padding, round, stroke
 END TYPE
 REDIM SHARED global AS global
+
+TYPE mouse
+    AS _FLOAT x, y
+    AS _BYTE left, right
+    AS INTEGER scroll
+END TYPE
+REDIM SHARED mouse AS mouse
 
 'Data structure
 TYPE node
@@ -42,7 +49,7 @@ REDIM SHARED nodefiles(0) AS STRING
 'UI
 TYPE element
     AS _BYTE view, acceptinput
-    AS STRING x, y, w, h, style, name, text, type, color
+    AS STRING x, y, w, h, style, name, text, type, color, hovercolor, shape
     value AS _FLOAT
 END TYPE
 REDIM SHARED element(0) AS element
@@ -67,10 +74,26 @@ resetallvalues
 loadui
 DO
     CLS
+    checkcontrols
     displayview 1
     _LIMIT internal.setting.fps
 LOOP
 SLEEP
+
+SUB checkcontrols
+    checkmouse
+END SUB
+
+SUB checkmouse
+    mouse.scroll = 0
+    DO
+        mouse.x = _MOUSEX
+        mouse.y = _MOUSEY
+        mouse.scroll = mouse.scroll + _MOUSEWHEEL
+        mouse.left = _MOUSEBUTTON(1)
+        mouse.right = _MOUSEBUTTON(2)
+    LOOP WHILE _MOUSEINPUT
+END SUB
 
 SUB checkui (arguments AS STRING)
     DO: e = e + 1
@@ -84,7 +107,8 @@ SUB checkelement (this AS element, arguments AS STRING)
     END IF
 END SUB
 
-SUB displayview (dview AS INTEGER)
+SUB displayview (dview AS INTEGER) 'displays a "view"
+    LINE (0, 0)-(_WIDTH(0), _HEIGHT(0)), col&("bg1"), BF
     SELECT CASE dview
         CASE 1
             IF UBOUND(element) > 0 THEN
@@ -99,13 +123,16 @@ END SUB
 
 SUB displayelement (this AS element, arguments AS STRING) 'parses abstract coordinates into discrete coordinates
     IF this.view = -1 THEN
-        DIM AS _FLOAT x, y, w, h
+        DIM AS _FLOAT x, y, w, h, iconsize
+        DIM AS LONG drawcolor
+        h = VAL(this.h)
+        IF LEN(this.shape) THEN iconsize = h - (2 * global.padding) ELSE iconsize = 0
         IF MID$(this.w, 1, 4) = "flex" THEN
-            w = VAL(this.w) + (_FONTWIDTH * (LEN(this.text) + 2))
+            w = VAL(this.w) + (_FONTWIDTH * (LEN(this.text))) + (2 * global.padding)
         ELSE
             w = VAL(this.w)
         END IF
-        h = VAL(this.h)
+        IF iconsize THEN w = w + iconsize + global.padding
 
         IF MID$(this.x, 1, 4) = "flex" THEN
             IF MID$(this.y, 1, 4) = "flex" THEN
@@ -124,19 +151,31 @@ SUB displayelement (this AS element, arguments AS STRING) 'parses abstract coord
             END IF
         END IF
 
-        LOCATE 1
-        PRINT x, y, w, h
+        IF mouse.x > x AND mouse.y > y AND mouse.x < x + w AND mouse.y < y + h THEN
+            drawcolor = col&(this.hovercolor)
+        ELSE
+            drawcolor = col&(this.color)
+        END IF
 
         SELECT CASE this.type
             CASE "button"
-                rectangle "x=" + lst$(x) + ";y=" + lst$(y) + ";w=" + lst$(w) + ";h=" + lst$(h) + ";color=" + this.color + ";style=" + this.style
+                rectangle "x=" + lst$(x) + ";y=" + lst$(y) + ";w=" + lst$(w) + ";h=" + lst$(h) + ";style=" + this.style, drawcolor
+                IF LEN(this.shape) THEN
+                    'drawshape "shape=" + this.shape + ";x=" + lst$(x) + ";y=" + lst$(y) + ";w=" + lst$(w) + ";h=" + lst$(h), drawcolor
+                    '_PUTIMAGE (x + global.padding, y + global.padding)-(x + global.padding + iconsize, y + global.padding + iconsize), this.icon
+                END IF
+                COLOR drawcolor, col&("t")
+                _PRINTSTRING (x + iconsize + (2 * global.padding), y + global.padding), this.text
             CASE "input"
-                rectangle "x=" + lst$(x) + ";y=" + lst$(y) + ";w=" + lst$(w) + ";h=" + lst$(h) + ";color=" + this.color + ";style=" + this.style
+                rectangle "x=" + lst$(x) + ";y=" + lst$(y) + ";w=" + lst$(w) + ";h=" + lst$(h) + ";style=" + this.style, drawcolor
+                IF LEN(this.shape) THEN
+                    '_PUTIMAGE (x + global.padding, y + global.padding)-(x + global.padding + iconsize, y + global.padding + iconsize), this.icon
+                END IF
         END SELECT
     END IF
 END SUB
 
-FUNCTION findsum (arguments AS STRING, addvalue AS _FLOAT)
+FUNCTION findsum (arguments AS STRING, addvalue AS _FLOAT) 'finds other objects that
     checksumx = getargumentv(arguments, "x")
     checksumy = getargumentv(arguments, "y")
     IF checksumx > 0 THEN
@@ -193,7 +232,7 @@ SUB resetsum 'explicitly doesn't use REDIM because that bugs out
             uisum(u).f = ""
         LOOP UNTIL u = UBOUND(uisum)
     END IF
-    REDIM uisum(0) AS uisum
+    REDIM _PRESERVE uisum(0) AS uisum
 END SUB
 
 SUB add.node (arguments AS STRING)
@@ -243,8 +282,10 @@ SUB loadui
                     element(eub).w = getargument$(uielement$, "w")
                     element(eub).h = getargument$(uielement$, "h")
                     element(eub).color = getargument$(uielement$, "color")
+                    element(eub).hovercolor = getargument$(uielement$, "hovercolor")
                     element(eub).style = getargument$(uielement$, "style")
                     element(eub).text = getargument$(uielement$, "text")
+                    element(eub).shape = getargument$(uielement$, "icon")
                     element(eub).view = -1
                 LOOP UNTIL EOF(freen)
             END IF
@@ -256,16 +297,28 @@ SUB loadui
     LOOP UNTIL lview = 3
 END SUB
 
+FUNCTION getimage& (arguments AS STRING)
+    'iwidth = getargumentv(arguments, "w")
+    'iheight = getargumentv(arguments, "h")
+    ipath$ = getargument$(arguments, "path")
+    getimage& = _LOADIMAGE(ipath$, 32)
+END FUNCTION
+
 SUB resetallvalues
     'internal settings
     internal.setting.trimstrings = -1
-    internal.setting.fps = 2
+    internal.setting.fps = 20
 
     'data structure
     global.internalpath = "internal"
     global.nodepath = "nodes"
+    skin$ = "default"
+    global.skinpath = "skins\" + skin$
     getmaxnodeid
     global.margin = 10
+    global.padding = 5
+    global.round = 3
+    global.stroke = 4
 END SUB
 
 SUB GetFileList (SearchDirectory AS STRING, DirList() AS STRING, FileList() AS STRING)
@@ -366,58 +419,78 @@ FUNCTION stringvalue$ (basestring AS STRING, argument AS STRING)
     END IF
 END FUNCTION
 
-SUB rectangle (arguments AS STRING) 'lx, ly, ux, uy, round, clr&, outline$
-    lx = VAL(getargument(arguments, "x"))
-    ly = VAL(getargument(arguments, "y"))
-    ux = lx + VAL(getargument(arguments, "w"))
-    uy = ly + VAL(getargument(arguments, "h"))
+SUB drawshape (arguments AS STRING, clr AS LONG)
+    DIM AS _FLOAT x, y, w, h, thickness
+    x = getargumentv(arguments, "x")
+    y = getargumentv(arguments, "y")
+    w = getargumentv(arguments, "w")
+    h = getargumentv(arguments, "h")
+    thickness = getargumentv(arguments, "thickness")
+    IF thickness = 0 THEN thickness = global.stroke
+    SELECT CASE getargument$(arguments, "shape")
+        CASE "+"
+            LINE (x + (w / 2) - (thickness / 2), y)-(x + (w / 2) + (thickness / 2), y + h), clr, BF
+            LINE (x, y + (h / 2) - (thickness / 2))-(x + w, y + (h / 2) + (thickness / 2)), clr, BF
+        CASE "x"
+    END SELECT
+END SUB
+
+SUB rectangle (arguments AS STRING, clr AS LONG)
+    x = getargumentv(arguments, "x")
+    y = getargumentv(arguments, "y")
+    w = getargumentv(arguments, "w")
+    h = getargumentv(arguments, "h")
     round$ = getargument$(arguments, "round")
+    rotation = getargumentv(arguments, "angle")
+    rotation = rotation / 180 * _PI
     IF round$ = "" THEN
         round = global.round
     ELSE
         round = VAL(round$)
     END IF
-    clr& = col&(getargument$(arguments, "color"))
     SELECT CASE UCASE$(getargument$(arguments, "style"))
         CASE "BF"
-            rectangleoutline lx, ly, ux, uy, round, clr&
-            PAINT (lx + ((ux - lx) / 2), ly + ((uy - ly) / 2)), clr&, clr&
+            rectangleoutline x, y, w, h, round, rotation, clr
+            PAINT (x + (w / 2), y + (h / 2)), clr, clr
         CASE "B"
-            rectangleoutline lx, ly, ux, uy, round, clr&
+            rectangleoutline x, y, w, h, round, rotation, clr
     END SELECT
 END SUB
 
-SUB rectangleoutline (lx, ly, ux, uy, round, clr&)
-    IF round > 0 THEN
-        'corners:
-        'lx-ly
-        x = -0.5 * _PI
-        DO: x = x + ((0.5 * _PI) / round / detail)
-            PSET ((lx + round) + (SIN(x) * round), (ly + round) - (COS(x) * round)), clr&
-        LOOP UNTIL x >= 0
-        'lx-uy
-        x = -0.5 * _PI
-        DO: x = x + ((0.5 * _PI) / round / detail)
-            PSET ((lx + round) + (SIN(x) * round), (uy - round) + (COS(x) * round)), clr&
-        LOOP UNTIL x >= 0
-        'ux-ly
-        x = -0.5 * _PI
-        DO: x = x + ((0.5 * _PI) / round / detail)
-            PSET ((ux - round) - (SIN(x) * round), (ly + round) - (COS(x) * round)), clr&
-        LOOP UNTIL x >= 0
-        'ux-uy
-        x = -0.5 * _PI
-        DO: x = x + ((0.5 * _PI) / round / detail)
-            PSET ((ux - round) - (SIN(x) * round), (uy - round) + (COS(x) * round)), clr&
-        LOOP UNTIL x >= 0
-        'lines:
-        LINE (lx + round, ly)-(ux - round, ly), clr&
-        LINE (lx + round, uy)-(ux - round, uy), clr&
-        LINE (lx, ly + round)-(lx, uy - round), clr&
-        LINE (ux, ly + round)-(ux, uy - round), clr&
-    ELSE
-        LINE (lx, ly)-(ux, uy), clr&, B
-    END IF
+SUB rectangleoutline (x, y, w, h, round, rotation, clr AS LONG)
+    IF w < h THEN min = w ELSE min = h
+    IF round > min / 2 THEN round = min / 2
+    distance = SQR((w ^ 2) + (h ^ 2)) / 2 'distance to center point
+    rotation = rotation - (.25 * _PI)
+    rounddistance = distance - SQR(round ^ 2 + round ^ 2)
+    cx = x + (w / 2)
+    cy = y + (h / 2)
+    detail = _PI / 2 * round
+    DO
+        IF corner MOD 2 = 0 THEN
+            baseangle = 2 * ATN((w / 2) / (h / 2))
+        ELSE
+            baseangle = 180 - (2 * ATN((w / 2) / (h / 2)))
+        END IF
+        anglesum = anglesum + baseangle
+
+        rcf = rotation + anglesum 'cornerfactor
+        rcfp1 = rotation + (corner + 1) * (_PI / 2)
+        px = cx + (rounddistance * SIN(rcf))
+        py = cy - (rounddistance * COS(rcf))
+
+        px1 = cx + (rounddistance * SIN(rcfp1))
+        py1 = cy - (rounddistance * COS(rcfp1))
+        angle1 = 0.25 * _PI + rcf
+        angle2 = -0.25 * _PI + rcfp1
+        LINE (px + (SIN(angle1) * round), py - (COS(angle1) * round))-(px1 + (SIN(angle2) * round), py1 - (COS(angle2) * round)), clr
+
+        angle = -0.25 * _PI + rcf
+        DO: angle = angle + ((0.5 * _PI) / detail)
+            PSET (px + (SIN(angle) * round), py - (COS(angle) * round)), clr
+        LOOP UNTIL angle >= (0.25 * _PI) + rcf
+        corner = corner + 1
+    LOOP UNTIL corner = 4
 END SUB
 
 FUNCTION lst$ (number AS _FLOAT)
@@ -426,10 +499,16 @@ END FUNCTION
 
 FUNCTION col& (colour AS STRING)
     SELECT CASE colour
+        CASE "t"
+            col& = _RGBA(0, 0, 0, 0)
         CASE "ui"
-            col& = _RGBA(255, 255, 255, 255)
+            col& = _RGBA(0, 0, 0, 255)
+        CASE "ui2"
+            col& = _RGBA(150, 150, 150, 255)
         CASE "bg1"
-            col& = _RGBA(20, 20, 20, 255)
+            col& = _RGBA(230, 230, 230, 255)
+        CASE "bg2"
+            col& = _RGBA(160, 160, 160, 255)
         CASE ELSE
             red$ = MID$(colour, 1, INSTR(colour, ";") - 1)
             green$ = MID$(colour, LEN(red$) + 1, INSTR(LEN(red$) + 1, colour, ";") - 1)
