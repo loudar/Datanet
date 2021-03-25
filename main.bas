@@ -49,7 +49,7 @@ REDIM SHARED nodefiles(0) AS STRING
 'UI
 TYPE element
     AS _BYTE view, acceptinput
-    AS STRING x, y, w, h, style, name, text, type, color, hovercolor, shape
+    AS STRING x, y, w, h, style, name, text, type, color, hovercolor, shape, angle
     value AS _FLOAT
 END TYPE
 REDIM SHARED element(0) AS element
@@ -128,7 +128,7 @@ SUB displayelement (this AS element, arguments AS STRING) 'parses abstract coord
         h = VAL(this.h)
         IF LEN(this.shape) THEN iconsize = h - (2 * global.padding) ELSE iconsize = 0
         IF MID$(this.w, 1, 4) = "flex" THEN
-            w = VAL(this.w) + (_FONTWIDTH * (LEN(this.text))) + (2 * global.padding)
+            w = VAL(this.w) + (_FONTWIDTH * (LEN(this.text) + 1)) + (2 * global.padding)
         ELSE
             w = VAL(this.w)
         END IF
@@ -159,7 +159,7 @@ SUB displayelement (this AS element, arguments AS STRING) 'parses abstract coord
 
         SELECT CASE this.type
             CASE "button"
-                rectangle "x=" + lst$(x) + ";y=" + lst$(y) + ";w=" + lst$(w) + ";h=" + lst$(h) + ";style=" + this.style, drawcolor
+                rectangle "x=" + lst$(x) + ";y=" + lst$(y) + ";w=" + lst$(w) + ";h=" + lst$(h) + ";style=" + this.style + ";angle=" + this.angle, drawcolor
                 IF LEN(this.shape) THEN
                     'drawshape "shape=" + this.shape + ";x=" + lst$(x) + ";y=" + lst$(y) + ";w=" + lst$(w) + ";h=" + lst$(h), drawcolor
                     '_PUTIMAGE (x + global.padding, y + global.padding)-(x + global.padding + iconsize, y + global.padding + iconsize), this.icon
@@ -167,7 +167,7 @@ SUB displayelement (this AS element, arguments AS STRING) 'parses abstract coord
                 COLOR drawcolor, col&("t")
                 _PRINTSTRING (x + iconsize + (2 * global.padding), y + global.padding), this.text
             CASE "input"
-                rectangle "x=" + lst$(x) + ";y=" + lst$(y) + ";w=" + lst$(w) + ";h=" + lst$(h) + ";style=" + this.style, drawcolor
+                rectangle "x=" + lst$(x) + ";y=" + lst$(y) + ";w=" + lst$(w) + ";h=" + lst$(h) + ";style=" + this.style + ";angle=" + this.angle, drawcolor
                 IF LEN(this.shape) THEN
                     '_PUTIMAGE (x + global.padding, y + global.padding)-(x + global.padding + iconsize, y + global.padding + iconsize), this.icon
                 END IF
@@ -286,6 +286,7 @@ SUB loadui
                     element(eub).style = getargument$(uielement$, "style")
                     element(eub).text = getargument$(uielement$, "text")
                     element(eub).shape = getargument$(uielement$, "icon")
+                    element(eub).angle = getargument$(uielement$, "angle")
                     element(eub).view = -1
                 LOOP UNTIL EOF(freen)
             END IF
@@ -461,35 +462,45 @@ SUB rectangleoutline (x, y, w, h, round, rotation, clr AS LONG)
     IF w < h THEN min = w ELSE min = h
     IF round > min / 2 THEN round = min / 2
     distance = SQR((w ^ 2) + (h ^ 2)) / 2 'distance to center point
-    rotation = rotation - (.25 * _PI)
+    rotation = rotation - (_PI / 2)
     rounddistance = distance - SQR(round ^ 2 + round ^ 2)
     cx = x + (w / 2)
     cy = y + (h / 2)
     detail = _PI / 2 * round
+    angle1 = ATN((h / 2) / (w / 2))
+    angle2 = ((_PI) - (2 * angle1)) / 2
+    rotation = rotation - angle1
     DO
+        corner = corner + 1
         IF corner MOD 2 = 0 THEN
-            baseangle = 2 * ATN((w / 2) / (h / 2))
+            cangle = angle2 * 2
+            offset = -_PI / 4
         ELSE
-            baseangle = 180 - (2 * ATN((w / 2) / (h / 2)))
+            cangle = angle1 * 2
+            offset = _PI / 4
         END IF
-        anglesum = anglesum + baseangle
 
-        rcf = rotation + anglesum 'cornerfactor
-        rcfp1 = rotation + (corner + 1) * (_PI / 2)
+        rcf = rotation + anglebase
+        rcfp1 = rotation + anglebase + cangle
+
         px = cx + (rounddistance * SIN(rcf))
         py = cy - (rounddistance * COS(rcf))
 
         px1 = cx + (rounddistance * SIN(rcfp1))
         py1 = cy - (rounddistance * COS(rcfp1))
-        angle1 = 0.25 * _PI + rcf
-        angle2 = -0.25 * _PI + rcfp1
-        LINE (px + (SIN(angle1) * round), py - (COS(angle1) * round))-(px1 + (SIN(angle2) * round), py1 - (COS(angle2) * round)), clr
 
-        angle = -0.25 * _PI + rcf
+        startangle = -(_PI / 2) + ((cangle / 2))
+        endangle = ((cangle / 2))
+
+        'uses endangle of previous corner to connect to startangle of next
+        LINE (px + (SIN(endangle + rcf) * round), py - (COS(endangle + rcf) * round))-(px1 + (SIN(startangle + rcfp1 + offset) * round), py1 - (COS(startangle + rcfp1 + offset) * round)), clr
+
+        angle = startangle + rcf
         DO: angle = angle + ((0.5 * _PI) / detail)
             PSET (px + (SIN(angle) * round), py - (COS(angle) * round)), clr
-        LOOP UNTIL angle >= (0.25 * _PI) + rcf
-        corner = corner + 1
+        LOOP UNTIL angle >= startangle + rcf + (_PI / 2)
+
+        anglebase = anglebase + cangle
     LOOP UNTIL corner = 4
 END SUB
 
