@@ -1,4 +1,0 @@
-type=button;name=addnode;x=flex;y=200;w=flex;h=25;color=ui;hovercolor=ui2;style=b;text=New node;shape=+;angle=0
-type=button;name=removenode;x=flex;y=200;w=flex;h=25;color=ui;hovercolor=ui2;style=b;text=Delete node;shape=x;angle=0
-type=button;name=addlink;x=flex;y=200;w=flex;h=25;color=ui;hovercolor=ui2;style=b;text=New link;shape=+;angle=0
-type=button;name=removelink;x=flex;y=200;w=flex;h=25;color=ui;hovercolor=ui2;style=b;text=Delete link;shape=x;angle=0
