@@ -60,7 +60,7 @@ REDIM SHARED nodefiles(0) AS STRING
 
 'UI
 TYPE element
-    AS _BYTE show, acceptinput
+    AS _BYTE show, acceptinput, allownumbers, allowtext, allowspecial
     AS STRING x, y, w, h, style, name, text, buffer, type, color, hovercolor, action, angle, view
     value AS _FLOAT
 END TYPE
@@ -70,8 +70,8 @@ TYPE uisum
     AS STRING f 'determines "focus"
 END TYPE
 REDIM SHARED uisum(0) AS uisum
-REDIM SHARED viewname(0) AS STRING
-REDIM SHARED currentview AS STRING 'the current view within the program
+REDIM SHARED AS STRING viewname(0), bufferchar, activeelement, currentview
+REDIM SHARED AS _BYTE invokedelete
 
 TYPE rectangle
     AS _FLOAT x, y, w, h
@@ -128,19 +128,38 @@ END SUB
 
 SUB checkkeyboard
     keyhit = _KEYHIT
+    IF keyhit < 0 THEN keyhit = 0
 
-END SUB
+    bufferchar = ""
+    invokedelete = 0
 
-SUB checkui (arguments AS STRING)
-    DO: e = e + 1
-        checkelement element(e), arguments
-    LOOP UNTIL e = UBOUND(element)
-END SUB
-
-SUB checkelement (this AS element, arguments AS STRING)
-    IF this.show = -1 AND this.acceptinput = -1 THEN
-
+    'element-specific
+    IF UBOUND(element) > 0 THEN
+        e = 0: DO: e = e + 1
+            IF _TRIM$(element(e).name) = activeelement THEN
+                IF keyhit >= 48 AND keyhit <= 58 AND element(e).allownumbers THEN
+                    bufferchar = CHR$(keyhit)
+                ELSEIF ((keyhit >= 64 AND keyhit <= 91) OR (keyhit >= 96 AND keyhit <= 123) OR keyhit = 32) AND element(e).allowtext THEN
+                    bufferchar = CHR$(keyhit)
+                ELSEIF ((keyhit >= 33 AND keyhit <= 47) OR (keyhit >= 58 AND keyhit <= 64) OR (keyhit >= 91 AND keyhit <= 96) OR (keyhit >= 123 AND keyhit <= 126)) AND element(e).allowspecial THEN
+                    bufferchar = CHR$(keyhit)
+                END IF
+            END IF
+        LOOP UNTIL e = UBOUND(element)
     END IF
+
+    'general
+    SELECT CASE keyhit
+        CASE 8: invokedelete = -1
+        CASE 9
+            IF UBOUND(element) > 0 THEN
+                e = 0: DO: e = e + 1
+                    IF _TRIM$(element(e).name) = activeelement THEN
+                        IF element(e + 1).view = currentview THEN activeelement = element(e + 1).name
+                    END IF
+                LOOP UNTIL e = UBOUND(element) - 1
+            END IF
+    END SELECT
 END SUB
 
 SUB displayview (dview AS STRING) 'displays a "view"
@@ -162,7 +181,7 @@ SUB displayelement (this AS element, arguments AS STRING) 'parses abstract coord
         DIM AS LONG drawcolor
         h = VAL(this.h)
         IF MID$(this.w, 1, 4) = "flex" THEN
-            w = VAL(this.w) + (_FONTWIDTH * (LEN(this.text) + 1)) + (2 * global.padding)
+            w = VAL(this.w) + (_FONTWIDTH * (LEN(this.text) + 2 + LEN(this.buffer))) + (2 * global.padding)
         ELSE
             w = VAL(this.w)
         END IF
@@ -184,24 +203,37 @@ SUB displayelement (this AS element, arguments AS STRING) 'parses abstract coord
                 y = VAL(this.y)
             END IF
         END IF
+        IF this.x = "margin" THEN x = global.margin
+        IF this.y = "margin" THEN y = global.margin
 
         IF mouse.x > x AND mouse.y > y AND mouse.x < x + w AND mouse.y < y + h THEN
             drawcolor = col&(this.hovercolor)
-            IF mouse.left THEN dothis "action=" + this.action
+            IF mouse.left AND this.action <> "" THEN
+                dothis "action=" + this.action
+            ELSEIF mouse.left AND this.action = "" THEN
+                activeelement = this.name
+            END IF
+        ELSEIF this.name = activeelement THEN
+            drawcolor = col&("blue")
         ELSE
             drawcolor = col&(this.color)
+        END IF
+        IF this.name = activeelement AND bufferchar <> "" THEN
+            this.buffer = this.buffer + bufferchar
+        ELSEIF this.name = activeelement AND invokedelete THEN
+            this.buffer = MID$(this.buffer, 1, LEN(this.buffer) - 1)
         END IF
 
         SELECT CASE this.type
             CASE "button"
                 rectangle "x=" + lst$(x) + ";y=" + lst$(y) + ";w=" + lst$(w) + ";h=" + lst$(h) + ";style=" + this.style + ";angle=" + this.angle, drawcolor
                 COLOR drawcolor, col&("t")
-                _PRINTSTRING (x + iconsize + (2 * global.padding), y + global.padding), this.text
+                _PRINTSTRING (x + iconsize + (2 * global.padding), y + global.padding), this.text + this.buffer
             CASE "input"
-                'rectangle "x=" + lst$(x) + ";y=" + lst$(y) + ";w=" + lst$(w) + ";h=" + lst$(h) + ";style=" + this.style + ";angle=" + this.angle, drawcolor
-                LINE (x, y + h + 3)-(x + w, y + h + 3), drawcolor
+                underlinedistance = 1
+                LINE (x, y + h + underlinedistance)-(x + w, y + h + underlinedistance), drawcolor
                 COLOR drawcolor, col&("t")
-                _PRINTSTRING (x + iconsize + (2 * global.padding), y + global.padding), this.text
+                _PRINTSTRING (x + iconsize + (2 * global.padding), y + global.padding), this.text + " " + this.buffer
         END SELECT
     END IF
 END SUB
@@ -219,6 +251,8 @@ SUB dothis (arguments AS STRING)
             ELSE
                 dothis "action=view.add.node"
             END IF
+        CASE "quit"
+            SYSTEM
     END SELECT
     SELECT CASE MID$(action$, 1, INSTR(action$, ".") - 1)
         CASE "view"
@@ -288,6 +322,9 @@ SUB loadui
                         eub = UBOUND(element)
                         element(eub).view = viewname(lview)
                         element(eub).type = getargument$(uielement$, "type")
+                        element(eub).allownumbers = getargumentv(uielement$, "allownumbers")
+                        element(eub).allowtext = getargumentv(uielement$, "allowtext")
+                        element(eub).allowspecial = getargumentv(uielement$, "allowspecial")
                         element(eub).name = getargument$(uielement$, "name")
                         element(eub).x = getargument$(uielement$, "x")
                         element(eub).y = getargument$(uielement$, "y")
@@ -591,6 +628,8 @@ FUNCTION col& (colour AS STRING)
             col& = _RGBA(33, 166, 0, 255)
         CASE "red"
             col& = _RGBA(255, 0, 55, 255)
+        CASE "blue"
+            col& = _RGBA(0, 144, 255, 255)
         CASE ELSE
             red$ = MID$(colour, 1, INSTR(colour, ";") - 1)
             green$ = MID$(colour, LEN(red$) + 1, INSTR(LEN(red$) + 1, colour, ";") - 1)
