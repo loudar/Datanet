@@ -1,5 +1,6 @@
 type=input;name=commmandline;x=margin;y=margin;w=flex;h=25;color=ui;hovercolor=ui2;style=b;text=Command:;angle=0;allownumbers=-1;allowtext=-1;allowspecial=0
 type=button;name=Baddnode;action=add.node;x=flex;y=50;w=flex;h=25;color=ui;hovercolor=ui2;style=b;text=New node;angle=0
 type=button;name=Bremovenode;action=remove.node;x=flex;y=50;w=flex;h=25;color=ui;hovercolor=ui2;style=b;text=Delete node;angle=0
-type=button;name=Baddlink;action=add.link;x=flex;y=50;w=flex;h=25;color=ui;hovercolor=ui2;style=b;text=New link;angle=0
+type=button;name=Baddlink;action=add.nodelink;x=flex;y=50;w=flex;h=25;color=ui;hovercolor=ui2;style=b;text=New link;angle=0
 type=button;name=Bremovelink;action=remove.link;x=flex;y=50;w=flex;h=25;color=ui;hovercolor=ui2;style=b;text=Delete link;angle=0
+type=time;name=clock;x=flex;y=bottom;w=flex;h=25;color=ui;hovercolor=ui

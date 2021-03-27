@@ -177,7 +177,7 @@ END SUB
 
 SUB displayelement (this AS element, arguments AS STRING) 'parses abstract coordinates into discrete coordinates
     IF this.show = -1 THEN
-        DIM AS _FLOAT x, y, w, h, iconsize
+        DIM AS _FLOAT x, y, w, h
         DIM AS LONG drawcolor
         h = VAL(this.h)
         IF MID$(this.w, 1, 4) = "flex" THEN
@@ -185,26 +185,33 @@ SUB displayelement (this AS element, arguments AS STRING) 'parses abstract coord
         ELSE
             w = VAL(this.w)
         END IF
-        IF iconsize THEN w = w + iconsize + global.padding
 
-        IF MID$(this.x, 1, 4) = "flex" THEN
-            IF MID$(this.y, 1, 4) = "flex" THEN
+        DIM AS STRING bufferx, buffery
+
+        bufferx = this.x
+        buffery = this.y
+        IF bufferx = "left" THEN bufferx = lst$(global.margin)
+        IF bufferx = "right" THEN bufferx = lst$(_WIDTH(0) - w - global.margin)
+        IF buffery = "top" THEN buffery = lst$(global.margin)
+        IF buffery = "bottom" THEN buffery = lst$(_HEIGHT(0) - h - global.margin)
+        IF bufferx = "margin" THEN bufferx = lst$(global.margin)
+        IF buffery = "margin" THEN buffery = lst$(global.margin)
+        IF MID$(bufferx, 1, 4) = "flex" THEN
+            IF MID$(buffery, 1, 4) = "flex" THEN
                 'what the fuck do i do here? difficult to determine because having flex in both positions effectively doesn't position it at all
                 'doesn't work like html, stacks elements based on position and not on
             ELSE
-                x = findsum("y=" + this.y, w)
-                y = VAL(this.y)
+                x = findsum("y=" + buffery, w)
+                y = VAL(buffery)
             END IF
         ELSE
-            x = VAL(this.x)
-            IF MID$(this.y, 1, 4) = "flex" THEN
-                y = findsum("x=" + this.x, h)
+            x = VAL(bufferx)
+            IF MID$(buffery, 1, 4) = "flex" THEN
+                y = findsum("x=" + bufferx, h)
             ELSE
-                y = VAL(this.y)
+                y = VAL(buffery)
             END IF
         END IF
-        IF this.x = "margin" THEN x = global.margin
-        IF this.y = "margin" THEN y = global.margin
 
         IF mouse.x > x AND mouse.y > y AND mouse.x < x + w AND mouse.y < y + h THEN
             drawcolor = col&(this.hovercolor)
@@ -228,21 +235,28 @@ SUB displayelement (this AS element, arguments AS STRING) 'parses abstract coord
             CASE "button"
                 rectangle "x=" + lst$(x) + ";y=" + lst$(y) + ";w=" + lst$(w) + ";h=" + lst$(h) + ";style=" + this.style + ";angle=" + this.angle, drawcolor
                 COLOR drawcolor, col&("t")
-                _PRINTSTRING (x + iconsize + (2 * global.padding), y + global.padding), this.text + this.buffer
+                _PRINTSTRING (x + (2 * global.padding), y + global.padding), this.text + " " + this.buffer
             CASE "input"
                 underlinedistance = 1
                 LINE (x, y + h + underlinedistance)-(x + w, y + h + underlinedistance), drawcolor
                 COLOR drawcolor, col&("t")
-                _PRINTSTRING (x + iconsize + (2 * global.padding), y + global.padding), this.text + " " + this.buffer
+                _PRINTSTRING (x + (2 * global.padding), y + global.padding), this.text + " " + this.buffer
+            CASE "text"
+                _PRINTSTRING (x + (2 * global.padding), y + global.padding), this.text + " " + this.buffer
+            CASE "time"
+                _PRINTSTRING (x + (2 * global.padding), y + global.padding), TIME$
+            CASE "date"
+                _PRINTSTRING (x + (2 * global.padding), y + global.padding), DATE$
         END SELECT
     END IF
 END SUB
 
 SUB dothis (arguments AS STRING)
-    DIM AS STRING nodeorigin, nodetype, nodetarget
-    nodeorigin = getargument$(arguments, "origin")
-    nodetype = getargument$(arguments, "type")
-    nodetarget = getargument$(arguments, "target")
+    DIM AS STRING nodeorigin, nodetype, nodetarget, linkname
+    nodeorigin = getargument$(arguments, "nodeorigin")
+    nodetype = getargument$(arguments, "nodetype")
+    nodetarget = getargument$(arguments, "nodetarget")
+    linkname = getargument$(arguments, "linkname")
     action$ = getargument$(arguments, "action")
     SELECT CASE action$
         CASE "add.node"
@@ -250,6 +264,12 @@ SUB dothis (arguments AS STRING)
                 add.node "target=" + nodetarget + ";type=" + nodetype
             ELSE
                 dothis "action=view.add.node"
+            END IF
+        CASE "add.nodelink"
+            IF set(nodeorigin) AND set(linkname) AND set(nodetarget) THEN
+                add.nodelink "origin=" + nodeorigin + ";name=" + linkname + ";target=" + nodetarget
+            ELSE
+                dothis "action=view.add.nodelink"
             END IF
         CASE "quit"
             SYSTEM
@@ -429,10 +449,10 @@ FUNCTION path$ (nodename AS STRING)
 END FUNCTION
 
 FUNCTION set (tocheck AS STRING) 'just returns if a string variable has a value or not
-    IF _TRIM$(tocheck) = "" THEN
-        set = 0
+    IF LTRIM$(RTRIM$(tocheck)) <> "" THEN
+        set = -1: EXIT FUNCTION
     ELSE
-        set = -1
+        set = 0: EXIT FUNCTION
     END IF
 END FUNCTION
 
