@@ -240,13 +240,15 @@ SUB displayelement (this AS element, e AS INTEGER, arguments AS STRING) 'parses 
 END SUB
 
 FUNCTION getexpos$ (e AS INTEGER)
-    IF (element(e).x = "previous.right" OR element(e).x = "prev.r" OR element(e).x = "flex") AND e > 1 THEN
+    IF (element(e).x = "previousright" OR element(e).x = "prevr" OR element(e).x = "flex") AND e > 1 THEN
         getexpos$ = lst$(VAL(getexpos$(e - 1)) + VAL(getewidth$(e - 1)) + global.margin)
-    ELSEIF (element(e).x = "previous.left" OR element(e).x = "prev.l" OR element(e).x = "-flex") AND e > 1 THEN
+    ELSEIF (element(e).x = "previousleft" OR element(e).x = "prevl" OR element(e).x = "-flex") AND e > 1 THEN
         getexpos$ = lst$(VAL(getexpos$(e - 1)) - VAL(getewidth$(e)) - global.margin)
+    ELSEIF (element(e).x = "previous" OR element(e).x = "p" OR element(e).x = "prev") AND e > 1 THEN
+        getexpos$ = getexpos$(e - 1)
     ELSEIF (element(e).x = "right" OR element(e).x = "r") THEN
         getexpos$ = lst$(_WIDTH(0) - VAL(getewidth$(e)) - global.margin)
-    ELSEIF (element(e).x = "margin" OR element(e).x = "left" OR element(e).x = "l" OR element(e).x = "0") THEN
+    ELSEIF (element(e).x = "margin" OR element(e).x = "m" OR element(e).x = "left" OR element(e).x = "l" OR element(e).x = "0") THEN
         getexpos$ = lst$(global.margin)
     ELSE
         getexpos$ = element(e).x
@@ -254,13 +256,15 @@ FUNCTION getexpos$ (e AS INTEGER)
 END FUNCTION
 
 FUNCTION geteypos$ (e AS INTEGER)
-    IF (element(e).y = "previous.bottom" OR element(e).y = "prev.b" OR element(e).y = "flex") AND e > 1 THEN
+    IF (element(e).y = "previousbottom" OR element(e).y = "prevb" OR element(e).y = "pb" OR element(e).y = "flex") AND e > 1 THEN
         geteypos$ = lst$(VAL(geteypos$(e - 1)) + VAL(geteheight$(e - 1)) + global.margin)
-    ELSEIF (element(e).y = "previous.top" OR element(e).y = "prev.t" OR element(e).y = "-flex") AND e > 1 THEN
+    ELSEIF (element(e).y = "previoustop" OR element(e).y = "prevt" OR element(e).y = "pt" OR element(e).y = "-flex") AND e > 1 THEN
         geteypos$ = lst$(VAL(geteypos$(e - 1)) - VAL(geteheight$(e)) - global.margin)
+    ELSEIF (element(e).y = "previous" OR element(e).y = "p" OR element(e).y = "prev") AND e > 1 THEN
+        geteypos$ = geteypos$(e - 1)
     ELSEIF (element(e).y = "bottom" OR element(e).y = "b") THEN
         geteypos$ = lst$(_HEIGHT(0) - VAL(geteheight$(e)) - global.margin)
-    ELSEIF (element(e).y = "margin" OR element(e).y = "top" OR element(e).y = "t" OR element(e).y = "0") THEN
+    ELSEIF (element(e).y = "margin" OR element(e).y = "m" OR element(e).y = "top" OR element(e).y = "t" OR element(e).y = "0") THEN
         geteypos$ = lst$(global.margin)
     ELSE
         geteypos$ = element(e).y
