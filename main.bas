@@ -167,7 +167,7 @@ SUB displayview (dview AS STRING) 'displays a "view"
     IF UBOUND(element) > 0 THEN
         DO: e = e + 1
             IF _TRIM$(element(e).view) = _TRIM$(dview) THEN
-                displayelement element(e), ""
+                displayelement element(e), e, ""
             END IF
         LOOP UNTIL e = UBOUND(element)
     END IF
@@ -175,36 +175,23 @@ SUB displayview (dview AS STRING) 'displays a "view"
     _DISPLAY
 END SUB
 
-SUB displayelement (this AS element, arguments AS STRING) 'parses abstract coordinates into discrete coordinates
+SUB displayelement (this AS element, e AS INTEGER, arguments AS STRING) 'parses abstract coordinates into discrete coordinates
     IF this.show = -1 THEN
-        DIM AS _FLOAT x, y, w, h, iconsize
-        DIM AS LONG drawcolor
-        h = VAL(this.h)
-        IF MID$(this.w, 1, 4) = "flex" THEN
-            w = VAL(this.w) + (_FONTWIDTH * (LEN(this.text) + 2 + LEN(this.buffer))) + (2 * global.padding)
-        ELSE
-            w = VAL(this.w)
-        END IF
-        IF iconsize THEN w = w + iconsize + global.padding
 
-        IF MID$(this.x, 1, 4) = "flex" THEN
-            IF MID$(this.y, 1, 4) = "flex" THEN
-                'what the fuck do i do here? difficult to determine because having flex in both positions effectively doesn't position it at all
-                'doesn't work like html, stacks elements based on position and not on
-            ELSE
-                x = findsum("y=" + this.y, w)
-                y = VAL(this.y)
-            END IF
-        ELSE
-            x = VAL(this.x)
-            IF MID$(this.y, 1, 4) = "flex" THEN
-                y = findsum("x=" + this.x, h)
-            ELSE
-                y = VAL(this.y)
-            END IF
+        'mouse-dependent
+        DIM AS LONG drawcolor
+        IF this.name = activeelement AND bufferchar <> "" THEN
+            this.buffer = this.buffer + bufferchar
+        ELSEIF this.name = activeelement AND invokedelete THEN
+            this.buffer = MID$(this.buffer, 1, LEN(this.buffer) - 1)
         END IF
-        IF this.x = "margin" THEN x = global.margin
-        IF this.y = "margin" THEN y = global.margin
+
+        'script-dependent recursive functions
+        DIM AS _FLOAT x, y, w, h
+        x = VAL(getexpos$(e))
+        y = VAL(geteypos$(e))
+        w = VAL(getewidth$(e))
+        h = VAL(geteheight$(e))
 
         IF mouse.x > x AND mouse.y > y AND mouse.x < x + w AND mouse.y < y + h THEN
             drawcolor = col&(this.hovercolor)
@@ -218,31 +205,74 @@ SUB displayelement (this AS element, arguments AS STRING) 'parses abstract coord
         ELSE
             drawcolor = col&(this.color)
         END IF
-        IF this.name = activeelement AND bufferchar <> "" THEN
-            this.buffer = this.buffer + bufferchar
-        ELSEIF this.name = activeelement AND invokedelete THEN
-            this.buffer = MID$(this.buffer, 1, LEN(this.buffer) - 1)
-        END IF
 
         SELECT CASE this.type
             CASE "button"
                 rectangle "x=" + lst$(x) + ";y=" + lst$(y) + ";w=" + lst$(w) + ";h=" + lst$(h) + ";style=" + this.style + ";angle=" + this.angle, drawcolor
                 COLOR drawcolor, col&("t")
-                _PRINTSTRING (x + iconsize + (2 * global.padding), y + global.padding), this.text + this.buffer
+                _PRINTSTRING (x + (2 * global.padding), y + global.padding), this.text + " " + this.buffer
             CASE "input"
                 underlinedistance = 1
                 LINE (x, y + h + underlinedistance)-(x + w, y + h + underlinedistance), drawcolor
                 COLOR drawcolor, col&("t")
-                _PRINTSTRING (x + iconsize + (2 * global.padding), y + global.padding), this.text + " " + this.buffer
+                _PRINTSTRING (x + (2 * global.padding), y + global.padding), this.text + " " + this.buffer
+            CASE "text"
+                _PRINTSTRING (x + (2 * global.padding), y + global.padding), this.text + " " + this.buffer
+            CASE "time"
+                _PRINTSTRING (x + (2 * global.padding), y + global.padding), TIME$
+            CASE "date"
+                _PRINTSTRING (x + (2 * global.padding), y + global.padding), DATE$
         END SELECT
     END IF
 END SUB
 
+FUNCTION getexpos$ (e AS INTEGER)
+    IF (element(e).x = "previous.right" OR element(e).x = "prev.r" OR element(e).x = "flex") AND e > 1 THEN
+        getexpos$ = lst$(VAL(getexpos$(e - 1)) + VAL(getewidth$(e - 1)) + global.margin)
+    ELSEIF (element(e).x = "previous.left" OR element(e).x = "prev.l" OR element(e).x = "-flex") AND e > 1 THEN
+        getexpos$ = lst$(VAL(getexpos$(e - 1)) - VAL(getewidth$(e)) - global.margin)
+    ELSEIF (element(e).x = "right" OR element(e).x = "r") THEN
+        getexpos$ = lst$(_WIDTH(0) - VAL(getewidth$(e)) - global.margin)
+    ELSEIF (element(e).x = "margin" OR element(e).x = "left" OR element(e).x = "l" OR element(e).x = "0") THEN
+        getexpos$ = lst$(global.margin)
+    ELSE
+        getexpos$ = element(e).x
+    END IF
+END FUNCTION
+
+FUNCTION geteypos$ (e AS INTEGER)
+    IF (element(e).y = "previous.bottom" OR element(e).y = "prev.b" OR element(e).y = "flex") AND e > 1 THEN
+        geteypos$ = lst$(VAL(geteypos$(e - 1)) + VAL(geteheight$(e - 1)) + global.margin)
+    ELSEIF (element(e).y = "previous.top" OR element(e).y = "prev.t" OR element(e).y = "-flex") AND e > 1 THEN
+        geteypos$ = lst$(VAL(geteypos$(e - 1)) - VAL(geteheight$(e)) - global.margin)
+    ELSEIF (element(e).y = "bottom" OR element(e).y = "b") THEN
+        geteypos$ = lst$(_HEIGHT(0) - VAL(geteheight$(e)) - global.margin)
+    ELSEIF (element(e).y = "margin" OR element(e).y = "top" OR element(e).y = "t" OR element(e).y = "0") THEN
+        geteypos$ = lst$(global.margin)
+    ELSE
+        geteypos$ = element(e).y
+    END IF
+END FUNCTION
+
+FUNCTION getewidth$ (e AS INTEGER)
+    IF element(e).w = "flex" OR element(e).w = "f" THEN 'you would normally want this one for text-based elements
+        getewidth$ = lst$(VAL(element(e).w) + (_FONTWIDTH * (LEN(element(e).text) + 2 + LEN(element(e).buffer))) + (2 * global.padding))
+    ELSE
+        getewidth$ = element(e).w
+    END IF
+END FUNCTION
+
+FUNCTION geteheight$ (e AS INTEGER)
+    IF element(e).h = "" THEN element(e).h = "25"
+    geteheight$ = element(e).h
+END FUNCTION
+
 SUB dothis (arguments AS STRING)
-    DIM AS STRING nodeorigin, nodetype, nodetarget
-    nodeorigin = getargument$(arguments, "origin")
-    nodetype = getargument$(arguments, "type")
-    nodetarget = getargument$(arguments, "target")
+    DIM AS STRING nodeorigin, nodetype, nodetarget, linkname
+    nodeorigin = getargument$(arguments, "nodeorigin")
+    nodetype = getargument$(arguments, "nodetype")
+    nodetarget = getargument$(arguments, "nodetarget")
+    linkname = getargument$(arguments, "linkname")
     action$ = getargument$(arguments, "action")
     SELECT CASE action$
         CASE "add.node"
@@ -250,6 +280,12 @@ SUB dothis (arguments AS STRING)
                 add.node "target=" + nodetarget + ";type=" + nodetype
             ELSE
                 dothis "action=view.add.node"
+            END IF
+        CASE "add.nodelink"
+            IF set(nodeorigin) AND set(linkname) AND set(nodetarget) THEN
+                add.nodelink "origin=" + nodeorigin + ";name=" + linkname + ";target=" + nodetarget
+            ELSE
+                dothis "action=view.add.nodelink"
             END IF
         CASE "quit"
             SYSTEM
@@ -429,59 +465,10 @@ FUNCTION path$ (nodename AS STRING)
 END FUNCTION
 
 FUNCTION set (tocheck AS STRING) 'just returns if a string variable has a value or not
-    IF _TRIM$(tocheck) = "" THEN
-        set = 0
+    IF LTRIM$(RTRIM$(tocheck)) <> "" THEN
+        set = -1: EXIT FUNCTION
     ELSE
-        set = -1
-    END IF
-END FUNCTION
-
-FUNCTION findsum (arguments AS STRING, addvalue AS _FLOAT) 'finds other objects that
-    checksumx = getargumentv(arguments, "x")
-    checksumy = getargumentv(arguments, "y")
-    IF checksumx > 0 THEN
-        IF UBOUND(uisum) > 0 THEN
-            DO: u = u + 1
-                IF uisum(u).x = checksumx AND uisum(u).f = "x" THEN
-                    sumfound = u
-                END IF
-            LOOP UNTIL u = UBOUND(uisum)
-        ELSE
-            REDIM _PRESERVE uisum(UBOUND(uisum) + 1) AS uisum
-            sumfound = UBOUND(uisum)
-        END IF
-        IF sumfound = 0 THEN
-            REDIM _PRESERVE uisum(UBOUND(uisum) + 1) AS uisum
-            sumfound = UBOUND(uisum)
-        END IF
-        uisum(sumfound).x = checksumx
-        uisum(sumfound).y = uisum(sumfound).y + global.margin + addvalue
-        uisum(sumfound).f = "x"
-        findsum = uisum(sumfound).y - addvalue
-        EXIT FUNCTION
-    ELSEIF checksumy > 0 THEN
-        IF UBOUND(uisum) > 0 THEN
-            DO: u = u + 1
-                IF uisum(u).y = checksumy AND uisum(u).f = "y" THEN
-                    sumfound = u
-                END IF
-            LOOP UNTIL u = UBOUND(uisum)
-        ELSE
-            REDIM _PRESERVE uisum(UBOUND(uisum) + 1) AS uisum
-            sumfound = UBOUND(uisum)
-        END IF
-        IF sumfound = 0 THEN
-            REDIM _PRESERVE uisum(UBOUND(uisum) + 1) AS uisum
-            sumfound = UBOUND(uisum)
-        END IF
-        uisum(sumfound).x = uisum(sumfound).x + global.margin + addvalue
-        uisum(sumfound).y = checksumy
-        uisum(sumfound).f = "y"
-        findsum = uisum(sumfound).x - addvalue
-        EXIT FUNCTION
-    ELSE
-        findsum = global.margin
-        EXIT FUNCTION
+        set = 0: EXIT FUNCTION
     END IF
 END FUNCTION
 
