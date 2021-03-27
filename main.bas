@@ -60,7 +60,7 @@ REDIM SHARED nodefiles(0) AS STRING
 
 'UI
 TYPE element
-    AS _BYTE show, acceptinput, allownumbers, allowtext, allowspecial
+    AS _BYTE show, acceptinput, allownumbers, allowtext, allowspecial, selected
     AS STRING x, y, w, h, style, name, text, buffer, type, color, hovercolor, action, angle, view
     value AS _FLOAT
 END TYPE
@@ -132,6 +132,7 @@ SUB checkkeyboard
 
     bufferchar = ""
     invokedelete = 0
+    invokeempty = 0
 
     'element-specific
     IF UBOUND(element) > 0 THEN
@@ -150,8 +151,8 @@ SUB checkkeyboard
 
     'general
     SELECT CASE keyhit
-        CASE 8: invokedelete = -1
-        CASE 9
+        CASE 8: invokedelete = -1 'backspace
+        CASE 9 'tab
             IF UBOUND(element) > 0 THEN
                 e = 0: DO: e = e + 1
                     IF _TRIM$(element(e).name) = activeelement THEN
@@ -159,6 +160,7 @@ SUB checkkeyboard
                     END IF
                 LOOP UNTIL e = UBOUND(element) - 1
             END IF
+        CASE 21248: invokeempty = -1 'delete
     END SELECT
 END SUB
 
@@ -184,6 +186,8 @@ SUB displayelement (this AS element, e AS INTEGER, arguments AS STRING) 'parses 
             this.buffer = this.buffer + bufferchar
         ELSEIF this.name = activeelement AND invokedelete THEN
             this.buffer = MID$(this.buffer, 1, LEN(this.buffer) - 1)
+        ELSEIF this.selected AND invokeempty THEN
+            this.buffer = ""
         END IF
 
         'script-dependent recursive functions
@@ -195,16 +199,25 @@ SUB displayelement (this AS element, e AS INTEGER, arguments AS STRING) 'parses 
 
         IF mouse.x > x AND mouse.y > y AND mouse.x < x + w AND mouse.y < y + h THEN
             drawcolor = col&(this.hovercolor)
-            IF mouse.left AND this.action <> "" THEN
-                dothis "action=" + this.action
-            ELSEIF mouse.left AND this.action = "" THEN
-                activeelement = this.name
+            IF _KEYDOWN(100303) OR _KEYDOWN(100304) THEN 'Shift + Mouse = Select
+                IF mouse.left THEN
+                    IF this.selected = -1 THEN this.selected = 0 ELSE this.selected = -1
+                    DO: m = _MOUSEINPUT: LOOP UNTIL _MOUSEBUTTON(1) = 0
+                END IF
+            ELSE 'No Shift + Mouse = Trigger action if existent
+                IF mouse.left AND this.action <> "" THEN
+                    dothis "action=" + this.action
+                ELSEIF mouse.left AND this.action = "" THEN
+                    activeelement = this.name
+                END IF
             END IF
-        ELSEIF this.name = activeelement THEN
+        ELSEIF this.name = activeelement OR this.selected THEN
             drawcolor = col&("blue")
         ELSE
             drawcolor = col&(this.color)
         END IF
+
+        IF debug = -1 THEN rectangle "x=" + lst$(x) + ";y=" + lst$(y) + ";w=" + lst$(w) + ";h=" + lst$(h) + ";round=0;style=" + this.style + ";angle=" + this.angle, _RGBA(255, 0, 50, 255)
 
         SELECT CASE this.type
             CASE "button"
@@ -212,8 +225,8 @@ SUB displayelement (this AS element, e AS INTEGER, arguments AS STRING) 'parses 
                 COLOR drawcolor, col&("t")
                 _PRINTSTRING (x + (2 * global.padding), y + global.padding), this.text + " " + this.buffer
             CASE "input"
-                underlinedistance = 1
-                LINE (x, y + h + underlinedistance)-(x + w, y + h + underlinedistance), drawcolor
+                underlinedistance = -2
+                LINE (x + _FONTWIDTH, y + h + underlinedistance)-(x + w, y + h + underlinedistance), drawcolor
                 COLOR drawcolor, col&("t")
                 _PRINTSTRING (x + (2 * global.padding), y + global.padding), this.text + " " + this.buffer
             CASE "text"
@@ -373,6 +386,7 @@ SUB loadui
                         element(eub).action = getargument$(uielement$, "action")
                         element(eub).angle = getargument$(uielement$, "angle")
                         element(eub).buffer = getargument$(uielement$, "buffer")
+                        element(eub).selected = 0
                         element(eub).show = -1
                     LOOP UNTIL EOF(freen)
                 END IF
