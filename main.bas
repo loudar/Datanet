@@ -61,7 +61,7 @@ REDIM SHARED nodefiles(0) AS STRING
 'UI
 TYPE element
     AS _BYTE show, acceptinput, allownumbers, allowtext, allowspecial, selected
-    AS STRING x, y, w, h, style, name, text, buffer, type, color, hovercolor, action, angle, view
+    AS STRING x, y, w, h, style, name, text, buffer, type, color, hovercolor, action, angle, view, round, hovertext
     value AS _FLOAT
 END TYPE
 REDIM SHARED element(0) AS element
@@ -71,7 +71,8 @@ TYPE uisum
 END TYPE
 REDIM SHARED uisum(0) AS uisum
 REDIM SHARED AS STRING viewname(0), bufferchar, activeelement, currentview
-REDIM SHARED AS _BYTE invokedelete
+REDIM SHARED AS _BYTE invokedelete, invokeempty
+REDIM SHARED AS LONG font_normal, font_big
 
 TYPE rectangle
     AS _FLOAT x, y, w, h
@@ -127,6 +128,7 @@ SUB checkmouse
 END SUB
 
 SUB checkkeyboard
+    DIM keyhit AS _UNSIGNED _INTEGER64
     keyhit = _KEYHIT
     IF keyhit < 0 THEN keyhit = 0
 
@@ -186,7 +188,8 @@ SUB displayelement (this AS element, e AS INTEGER, arguments AS STRING) 'parses 
             this.buffer = this.buffer + bufferchar
         ELSEIF this.name = activeelement AND invokedelete THEN
             this.buffer = MID$(this.buffer, 1, LEN(this.buffer) - 1)
-        ELSEIF this.selected AND invokeempty THEN
+        END IF
+        IF (this.selected OR this.name = activeelement) AND invokeempty THEN
             this.buffer = ""
         END IF
 
@@ -200,13 +203,13 @@ SUB displayelement (this AS element, e AS INTEGER, arguments AS STRING) 'parses 
         IF mouse.x > x AND mouse.y > y AND mouse.x < x + w AND mouse.y < y + h THEN
             drawcolor = col&(this.hovercolor)
             IF _KEYDOWN(100303) OR _KEYDOWN(100304) THEN 'Shift + Mouse = Select
-                IF mouse.left THEN
+                IF mouse.left AND (this.type = "input" OR this.type = "dropdown") THEN
                     IF this.selected = -1 THEN this.selected = 0 ELSE this.selected = -1
                     DO: m = _MOUSEINPUT: LOOP UNTIL _MOUSEBUTTON(1) = 0
                 END IF
             ELSE 'No Shift + Mouse = Trigger action if existent
                 IF mouse.left AND this.action <> "" THEN
-                    dothis "action=" + this.action
+                    dothis "action=" + this.action + ";" + getcurrentinputvalues$
                 ELSEIF mouse.left AND this.action = "" THEN
                     activeelement = this.name
                 END IF
@@ -219,25 +222,52 @@ SUB displayelement (this AS element, e AS INTEGER, arguments AS STRING) 'parses 
 
         IF debug = -1 THEN rectangle "x=" + lst$(x) + ";y=" + lst$(y) + ";w=" + lst$(w) + ";h=" + lst$(h) + ";round=0;style=" + this.style + ";angle=" + this.angle, _RGBA(255, 0, 50, 255)
 
+        _FONT font_normal
         SELECT CASE this.type
             CASE "button"
-                rectangle "x=" + lst$(x) + ";y=" + lst$(y) + ";w=" + lst$(w) + ";h=" + lst$(h) + ";style=" + this.style + ";angle=" + this.angle, drawcolor
-                COLOR drawcolor, col&("t")
+                rectangle "x=" + lst$(x) + ";y=" + lst$(y) + ";w=" + lst$(w) + ";h=" + lst$(h) + ";style=" + this.style + ";angle=" + this.angle + ";round=" + this.round, drawcolor
+                IF LCASE$(this.style) = "bf" THEN
+                    COLOR col&("bg1"), col&("t")
+                ELSE
+                    COLOR drawcolor, col&("t")
+                END IF
                 _PRINTSTRING (x + (2 * global.padding), y + global.padding), this.text + " " + this.buffer
             CASE "input"
                 underlinedistance = -2
-                LINE (x + _FONTWIDTH, y + h + underlinedistance)-(x + w, y + h + underlinedistance), drawcolor
+                LINE (x + _FONTWIDTH(font_normal), y + h + underlinedistance)-(x + w, y + h + underlinedistance), drawcolor
                 COLOR drawcolor, col&("t")
                 _PRINTSTRING (x + (2 * global.padding), y + global.padding), this.text + " " + this.buffer
             CASE "text"
+                COLOR drawcolor, col&("t")
                 _PRINTSTRING (x + (2 * global.padding), y + global.padding), this.text + " " + this.buffer
             CASE "time"
+                COLOR drawcolor, col&("t")
                 _PRINTSTRING (x + (2 * global.padding), y + global.padding), TIME$
             CASE "date"
+                COLOR drawcolor, col&("t")
                 _PRINTSTRING (x + (2 * global.padding), y + global.padding), DATE$
+            CASE "title"
+                _FONT font_big
+                COLOR drawcolor, col&("t")
+                _PRINTSTRING (x + (2 * global.padding), y + global.padding), this.text
+                _FONT font_normal
+            CASE "box"
+                rectangle "x=" + lst$(x) + ";y=" + lst$(y) + ";w=" + lst$(w) + ";h=" + lst$(h) + ";style=" + this.style + ";angle=" + this.angle + ";round=" + this.round, drawcolor
         END SELECT
     END IF
 END SUB
+
+FUNCTION getcurrentinputvalues$
+    DIM buffer AS STRING
+    IF UBOUND(element) > 0 THEN
+        DO: e = e + 1
+            IF element(e).view = currentview THEN
+                buffer = buffer + element(e).name + "=" + element(e).buffer + ";"
+            END IF
+        LOOP UNTIL e = UBOUND(element)
+    END IF
+    getcurrentinputvalues$ = buffer
+END FUNCTION
 
 FUNCTION getexpos$ (e AS INTEGER)
     IF (element(e).x = "previousright" OR element(e).x = "prevr" OR element(e).x = "flex") AND e > 1 THEN
@@ -274,12 +304,15 @@ END FUNCTION
 FUNCTION getewidth$ (e AS INTEGER)
     IF element(e).w = "flex" OR element(e).w = "f" THEN 'you would normally want this one for text-based elements
         getewidth$ = lst$(VAL(element(e).w) + (_FONTWIDTH * (LEN(element(e).text) + 2 + LEN(element(e).buffer))) + (2 * global.padding))
+    ELSEIF element(e).w = "full" THEN
+        getewidth$ = lst$(_WIDTH(0) - VAL(getexpos$(e)) - global.margin)
     ELSE
         getewidth$ = element(e).w
     END IF
 END FUNCTION
 
 FUNCTION geteheight$ (e AS INTEGER)
+    IF element(e).type = "title" THEN element(e).h = lst$(_FONTHEIGHT(font_big) + (2 * global.padding))
     IF element(e).h = "" THEN element(e).h = "25"
     geteheight$ = element(e).h
 END FUNCTION
@@ -304,6 +337,12 @@ SUB dothis (arguments AS STRING)
             ELSE
                 dothis "action=view.add.nodelink"
             END IF
+        CASE "remove.node"
+            IF set(nodetarget) AND set(nodetype) THEN
+                add.node "target=" + nodetarget + ";type=" + nodetype
+            ELSE
+                dothis "action=view.remove.node"
+            END IF
         CASE "quit"
             SYSTEM
     END SELECT
@@ -319,7 +358,6 @@ SUB add.node (arguments AS STRING)
     this.type = getargument$(arguments, "type")
     this.date = DATE$
     this.time = TIME$
-    this.id = lst$(global.maxnodeid + 1)
     IF set(this.name) AND set(this.type) THEN
         writenode "", this
         getmaxnodeid
@@ -327,8 +365,14 @@ SUB add.node (arguments AS STRING)
 END SUB
 
 SUB writenode (arguments AS STRING, this AS node)
+    file$ = path$(this.name)
+    IF _FILEEXISTS(file$) THEN
+        DO: nodecount = nodecount + 1
+            file$ = path$(this.name + "_" + lst$(nodecount))
+        LOOP UNTIL _FILEEXISTS(file$) = 0
+    END IF
     filen = FREEFILE
-    OPEN path$(this.id) FOR OUTPUT AS #filen
+    OPEN file$ FOR OUTPUT AS #filen
     WRITE #filen, "date=" + this.date
     WRITE #filen, "time=" + this.time
     WRITE #filen, "name=" + this.name
@@ -336,20 +380,59 @@ SUB writenode (arguments AS STRING, this AS node)
     CLOSE #filen
 END SUB
 
+FUNCTION getnodecount (arguments AS STRING)
+    DIM AS STRING nodetarget
+    DIM AS INTEGER buffer
+    nodetarget = getargument$(arguments, "target")
+    file$ = path$(nodetarget)
+    IF _FILEEXISTS(file$) THEN
+        buffer = buffer + 1
+        DO: nodecount = nodecount + 1
+            file$ = path$(nodetarget + "_" + lst$(nodecount))
+            IF _FILEEXISTS(file$) THEN buffer = buffer + 1
+        LOOP UNTIL _FILEEXISTS(file$) = 0
+        getnodecount = buffer
+        EXIT FUNCTION
+    ELSE
+        getnodecount = 0
+        EXIT FUNCTION
+    END IF
+END FUNCTION
+
 SUB add.nodelink (arguments AS STRING)
     DIM this AS nodelink
-
 END SUB
 
 SUB loadconfig
-    'TBD
+    configfile$ = global.internalpath + "\config.dst"
+    prooffile configfile$, -1
+    freen = FREEFILE
+    OPEN configfile$ FOR INPUT AS #freen
+    IF EOF(freen) = 0 THEN
+        DO
+            INPUT #freen, configline$
+            IF getargumentv(configline$, "padding") THEN global.padding = getargumentv(configline$, "padding")
+            IF getargumentv(configline$, "margin") THEN global.margin = getargumentv(configline$, "margin")
+            IF getargumentv(configline$, "round") THEN global.round = getargumentv(configline$, "round")
+            IF getargumentv(configline$, "stroke") THEN global.stroke = getargumentv(configline$, "stroke")
+        LOOP UNTIL EOF(freen) = -1
+    END IF
+    CLOSE #freen
 END SUB
 
 SUB loadui
     REDIM _PRESERVE viewname(0) AS STRING
 
+    fontr$ = "internal\fonts\PTMono-Regular.ttf" 'replace with file loaded from config file
+    fonteb$ = "internal\fonts\OpenSans-ExtraBold.ttf"
+    font_normal = _LOADFONT(fontr$, 16, "MONOSPACE")
+    font_big = _LOADFONT(fonteb$, 48)
+    _FONT font_normal
+
     freen = FREEFILE
-    OPEN global.internalpath + "\views.dui" FOR INPUT AS #freen
+    viewfile$ = global.internalpath + "\views.dui"
+    prooffile viewfile$, -1
+    OPEN viewfile$ FOR INPUT AS #freen
     IF EOF(freen) = 0 THEN
         DO: lview = lview + 1
             REDIM _PRESERVE viewname(UBOUND(viewname) + 1) AS STRING
@@ -390,8 +473,14 @@ SUB loadui
                         element(eub).action = getargument$(uielement$, "action")
                         element(eub).angle = getargument$(uielement$, "angle")
                         element(eub).buffer = getargument$(uielement$, "buffer")
+                        element(eub).round = getargument$(uielement$, "round")
+                        element(eub).hovertext = getargument$(uielement$, "hovertext")
                         element(eub).selected = 0
                         element(eub).show = -1
+
+                        IF element(eub).type = "input" AND activeelement = "" THEN
+                            activeelement = element(eub).name
+                        END IF
                     LOOP UNTIL EOF(freen)
                 END IF
                 CLOSE #freen
@@ -415,13 +504,25 @@ SUB resetallvalues
     'data structure
     global.internalpath = "internal"
     global.nodepath = "nodes"
-    skin$ = "default"
-    global.skinpath = "skins\" + skin$
+    proofpath global.internalpath
+    proofpath global.nodepath
     getmaxnodeid
-    global.margin = 10
-    global.padding = 5
-    global.round = 3
-    global.stroke = 4
+    loadconfig
+END SUB
+
+SUB proofpath (pathtoproof AS STRING) 'creates a folder if it doesn't exist
+    IF _DIREXISTS(pathtoproof) = 0 THEN
+        MKDIR pathtoproof
+    END IF
+END SUB
+
+SUB prooffile (filetoproof AS STRING, giveerror AS _BYTE) 'creates a file if it doesn't exist
+    IF _FILEEXISTS(filetoproof) = 0 THEN
+        IF giveerror THEN PRINT "The following file could not be found, the program might not work as intended: " + filetoproof: _DELAY 2
+        freen = FREEFILE
+        OPEN filetoproof FOR OUTPUT AS #freen
+        CLOSE #freen
+    END IF
 END SUB
 
 SUB GetFileList (SearchDirectory AS STRING, DirList() AS STRING, FileList() AS STRING)
@@ -560,14 +661,14 @@ SUB rectangle (arguments AS STRING, clr AS LONG)
     END IF
     SELECT CASE UCASE$(getargument$(arguments, "style"))
         CASE "BF"
-            rectangleoutline x, y, w, h, round, rotation, clr
+            rectangleoutline x, y, w, h, round, rotation, clr, _PI / 20
             PAINT (x + (w / 2), y + (h / 2)), clr, clr
         CASE "B"
-            rectangleoutline x, y, w, h, round, rotation, clr
+            rectangleoutline x, y, w, h, round, rotation, clr, 0
     END SELECT
 END SUB
 
-SUB rectangleoutline (x, y, w, h, round, rotation, clr AS LONG)
+SUB rectangleoutline (x, y, w, h, round, rotation, clr AS LONG, bfadjust)
     IF w < h THEN min = w ELSE min = h
     IF round > min / 2 THEN round = min / 2
     distance = SQR((w ^ 2) + (h ^ 2)) / 2 'distance to center point
@@ -575,7 +676,7 @@ SUB rectangleoutline (x, y, w, h, round, rotation, clr AS LONG)
     rounddistance = distance - SQR(round ^ 2 + round ^ 2)
     cx = x + (w / 2)
     cy = y + (h / 2)
-    detail = _PI / 2 * round
+    detail = _PI * round
     angle1 = ATN((h / 2) / (w / 2))
     angle2 = ((_PI) - (2 * angle1)) / 2
     rotation = rotation - angle1
@@ -604,10 +705,10 @@ SUB rectangleoutline (x, y, w, h, round, rotation, clr AS LONG)
         'uses endangle of previous corner to connect to startangle of next
         LINE (px + (SIN(endangle + rcf) * round), py - (COS(endangle + rcf) * round))-(px1 + (SIN(startangle + rcfp1 + offset) * round), py1 - (COS(startangle + rcfp1 + offset) * round)), clr
 
-        angle = startangle + rcf
+        angle = startangle + rcf - bfadjust
         DO: angle = angle + ((0.5 * _PI) / detail)
             PSET (px + (SIN(angle) * round), py - (COS(angle) * round)), clr
-        LOOP UNTIL angle >= startangle + rcf + (_PI / 2)
+        LOOP UNTIL angle >= startangle + rcf + (_PI / 2) + bfadjust
 
         anglebase = anglebase + cangle
     LOOP UNTIL corner = 4
@@ -622,7 +723,7 @@ FUNCTION col& (colour AS STRING)
         CASE "t"
             col& = _RGBA(0, 0, 0, 0)
         CASE "ui"
-            col& = _RGBA(0, 0, 0, 255)
+            col& = _RGBA(20, 20, 20, 255)
         CASE "ui2"
             col& = _RGBA(150, 150, 150, 255)
         CASE "bg1"

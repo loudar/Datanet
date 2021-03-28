@@ -4,3 +4,5 @@ add.nodelink
 node
 nodelink
 nodegraph
+remove.node
+remove.nodelink

@@ -1,5 +1,7 @@
-type=input;name=nodeorigin;x=50;y=100;w=flex;h=25;color=ui;hovercolor=ui2;style=b;text=Origin/Parent:;angle=0;allownumbers=-1;allowtext=-1;allowspecial=0
-type=input;name=linkname;x=50;y=140;w=flex;h=25;color=ui;hovercolor=ui2;style=b;text=Link name:;angle=0;allownumbers=-1;allowtext=-1;allowspecial=0
-type=input;name=nodetarget;x=50;y=180;w=flex;h=25;color=ui;hovercolor=ui2;style=b;text=Target/Child:;angle=0;allownumbers=-1;allowtext=-1;allowspecial=0
-type=button;name=save;action=save;x=75;y=240;w=flex;h=25;color=ui;hovercolor=green;style=b;text=Add node;angle=0
-type=button;name=back;action=view.main;x=75;y=280;w=flex;h=25;color=ui;hovercolor=red;style=b;text=Back;angle=0
+type=title;x=margin;y=margin;w=flex;h=25;color=ui;hovercolor=ui;text=Add link;name=title
+type=input;name=nodeorigin;x=prev;y=prevb;w=flex;h=25;color=ui;hovercolor=ui2;style=b;text=Origin:;angle=0;allownumbers=-1;allowtext=-1;allowspecial=0
+type=input;name=linkname;x=prev;y=prevb;w=flex;h=25;color=ui;hovercolor=ui2;style=b;text=Link name:;angle=0;allownumbers=-1;allowtext=-1;allowspecial=0
+type=input;name=nodetarget;x=prev;y=prevb;w=flex;h=25;color=ui;hovercolor=ui2;style=b;text=Target:;angle=0;allownumbers=-1;allowtext=-1;allowspecial=0
+type=button;name=back;action=view.main;x=prev;y=prevb;w=flex;h=25;color=ui;hovercolor=blue;style=b;text=Back;angle=0
+type=button;name=save;action=save;x=prevr;y=prev;w=flex;h=25;color=ui;hovercolor=green;style=b;text=Add link;angle=0
+type=button;x=right;y=bottom;w=flex;h=25;color=ui;hovercolor=ui2;name=quit;style=b;angle=0;text=Quit;action=quit
