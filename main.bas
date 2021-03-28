@@ -49,10 +49,10 @@ REDIM SHARED mouse AS mouse
 
 'Data structure
 TYPE node
-    AS STRING id, name, type, date, time
+    AS STRING name, type, date, time
 END TYPE
 TYPE nodelink
-    AS STRING parent, name, child
+    AS STRING origin, name, target, date, time
 END TYPE
 
 REDIM SHARED directories(0) AS STRING
@@ -225,6 +225,7 @@ SUB displayelement (this AS element, e AS INTEGER, arguments AS STRING) 'parses 
         _FONT font_normal
         SELECT CASE this.type
             CASE "button"
+                x = x + (2 * global.padding)
                 rectangle "x=" + lst$(x) + ";y=" + lst$(y) + ";w=" + lst$(w) + ";h=" + lst$(h) + ";style=" + this.style + ";angle=" + this.angle + ";round=" + this.round, drawcolor
                 IF LCASE$(this.style) = "bf" THEN
                     COLOR col&("bg1"), col&("t")
@@ -251,6 +252,8 @@ SUB displayelement (this AS element, e AS INTEGER, arguments AS STRING) 'parses 
                 COLOR drawcolor, col&("t")
                 _PRINTSTRING (x + (2 * global.padding), y + global.padding), this.text
                 _FONT font_normal
+            CASE "line"
+                LINE (x + (2 * global.padding), y)-(x + w - (2 * global.padding), y), drawcolor
             CASE "box"
                 rectangle "x=" + lst$(x) + ";y=" + lst$(y) + ";w=" + lst$(w) + ";h=" + lst$(h) + ";style=" + this.style + ";angle=" + this.angle + ";round=" + this.round, drawcolor
         END SELECT
@@ -261,8 +264,10 @@ FUNCTION getcurrentinputvalues$
     DIM buffer AS STRING
     IF UBOUND(element) > 0 THEN
         DO: e = e + 1
-            IF element(e).view = currentview THEN
+            IF element(e).view = currentview AND element(e).name <> "commandline" THEN
                 buffer = buffer + element(e).name + "=" + element(e).buffer + ";"
+            ELSEIF element(e).view = currentview AND element(e).name = "commandline" THEN
+                buffer = buffer + element(e).buffer + ";"
             END IF
         LOOP UNTIL e = UBOUND(element)
     END IF
@@ -327,6 +332,8 @@ SUB dothis (arguments AS STRING)
     SELECT CASE action$
         CASE "add.node"
             IF set(nodetarget) AND set(nodetype) THEN
+                nodecount = getnodecount(nodetarget)
+                nodecount = nodecount + 1 'adds a new node with the same name, but writes it into a separate file
                 add.node "target=" + nodetarget + ";type=" + nodetype
             ELSE
                 dothis "action=view.add.node"
@@ -380,7 +387,7 @@ SUB writenode (arguments AS STRING, this AS node)
     CLOSE #filen
 END SUB
 
-FUNCTION getnodecount (arguments AS STRING)
+FUNCTION getnodecount (arguments AS STRING) 'counts the amount of nodes with a given name <target>
     DIM AS STRING nodetarget
     DIM AS INTEGER buffer
     nodetarget = getargument$(arguments, "target")
@@ -399,8 +406,25 @@ FUNCTION getnodecount (arguments AS STRING)
     END IF
 END FUNCTION
 
-SUB add.nodelink (arguments AS STRING)
+SUB add.nodelink (arguments AS STRING) 'adds a new node link, but doesn't check if it exists already!
     DIM this AS nodelink
+    this.target = getargument$(arguments, "target")
+    this.name = getargument$(arguments, "name")
+    this.origin = getargument$(arguments, "origin")
+    this.date = DATE$
+    this.time = TIME$
+    IF set(this.target) AND set(this.name) AND set(this.origin) THEN
+        writenodelink "", this
+        getmaxnodeid
+    END IF
+END SUB
+
+SUB writenodelink (arguments AS STRING, this AS nodelink) 'writes a nodelink to a given node
+    file$ = path$(this.origin)
+    filen = FREEFILE
+    OPEN file$ FOR OUTPUT AS #filen
+    WRITE #filen, "link:date=" + this.date + ";time=" + this.time + ";origin=" + this.origin + ";name=" + this.name + ";target=" + this.target
+    CLOSE #filen
 END SUB
 
 SUB loadconfig
@@ -676,13 +700,13 @@ SUB rectangleoutline (x, y, w, h, round, rotation, clr AS LONG, bfadjust)
     rounddistance = distance - SQR(round ^ 2 + round ^ 2)
     cx = x + (w / 2)
     cy = y + (h / 2)
-    detail = _PI * round
+    detail = _PI * round 'how many pixels are calculated for one rounded corner
     angle1 = ATN((h / 2) / (w / 2))
     angle2 = ((_PI) - (2 * angle1)) / 2
     rotation = rotation - angle1
     DO
         corner = corner + 1
-        IF corner MOD 2 = 0 THEN
+        IF corner MOD 2 = 0 THEN 'alternates between the two different possible angles within a rectangle
             cangle = angle2 * 2
             offset = -_PI / 4
         ELSE
@@ -690,6 +714,7 @@ SUB rectangleoutline (x, y, w, h, round, rotation, clr AS LONG, bfadjust)
             offset = _PI / 4
         END IF
 
+        'rcf = round corner factor, adds the angle progressively together to go "around" the rectangle based off the middle
         rcf = rotation + anglebase
         rcfp1 = rotation + anglebase + cangle
 
@@ -699,12 +724,14 @@ SUB rectangleoutline (x, y, w, h, round, rotation, clr AS LONG, bfadjust)
         px1 = cx + (rounddistance * SIN(rcfp1))
         py1 = cy - (rounddistance * COS(rcfp1))
 
+        'start is left end of rounding, end is right end of rounding
         startangle = -(_PI / 2) + ((cangle / 2))
         endangle = ((cangle / 2))
 
-        'uses endangle of previous corner to connect to startangle of next
+        'uses endangle of current corner to connect to startangle of next
         LINE (px + (SIN(endangle + rcf) * round), py - (COS(endangle + rcf) * round))-(px1 + (SIN(startangle + rcfp1 + offset) * round), py1 - (COS(startangle + rcfp1 + offset) * round)), clr
 
+        'draws the curves on the corners pixel by pixel
         angle = startangle + rcf - bfadjust
         DO: angle = angle + ((0.5 * _PI) / detail)
             PSET (px + (SIN(angle) * round), py - (COS(angle) * round)), clr
