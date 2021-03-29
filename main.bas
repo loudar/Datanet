@@ -60,8 +60,11 @@ REDIM SHARED nodefiles(0) AS STRING
 
 'UI
 TYPE element
-    AS _BYTE show, acceptinput, allownumbers, allowtext, allowspecial, selected
-    AS STRING x, y, w, h, style, name, text, buffer, type, color, hovercolor, action, angle, view, round, hovertext
+    AS _BYTE show, acceptinput, allownumbers, allowtext, allowspecial, selected, state
+    AS STRING x, y, w, h, style, name, text, buffer, type, color, hovercolor, action, angle, view, round, hovertext, padding
+    AS INTEGER sel_start, sel_end, cursor
+    AS _UNSIGNED _INTEGER64 scroll
+    AS _FLOAT statelock
     value AS _FLOAT
 END TYPE
 REDIM SHARED element(0) AS element
@@ -71,8 +74,9 @@ TYPE uisum
 END TYPE
 REDIM SHARED uisum(0) AS uisum
 REDIM SHARED AS STRING viewname(0), bufferchar, activeelement, currentview
-REDIM SHARED AS _BYTE invokedelete, invokeempty
+REDIM SHARED AS _BYTE invokedelete, invokeempty, invokedeselect, invokeright, invokeleft
 REDIM SHARED AS LONG font_normal, font_big
+REDIM SHARED AS INTEGER elementlock
 
 TYPE rectangle
     AS _FLOAT x, y, w, h
@@ -135,6 +139,8 @@ SUB checkkeyboard
     bufferchar = ""
     invokedelete = 0
     invokeempty = 0
+    invokeright = 0
+    invokeleft = 0
 
     'element-specific
     IF UBOUND(element) > 0 THEN
@@ -163,6 +169,8 @@ SUB checkkeyboard
                 LOOP UNTIL e = UBOUND(element) - 1
             END IF
         CASE 21248: invokeempty = -1 'delete
+        CASE 19200: invokeleft = -1 'left arrow
+        CASE 19712: invokeright = -1 'right arrow
     END SELECT
 END SUB
 
@@ -184,24 +192,94 @@ SUB displayelement (this AS element, e AS INTEGER, arguments AS STRING) 'parses 
 
         'mouse-dependent
         DIM AS LONG drawcolor
-        IF this.name = activeelement AND bufferchar <> "" THEN
-            this.buffer = this.buffer + bufferchar
-        ELSEIF this.name = activeelement AND invokedelete THEN
-            this.buffer = MID$(this.buffer, 1, LEN(this.buffer) - 1)
+        IF this.name = activeelement THEN
+            'add characters (and ctrl+char controls)
+            IF bufferchar <> "" THEN
+                IF _KEYDOWN(100305) OR _KEYDOWN(100306) THEN
+                    SELECT CASE LCASE$(bufferchar)
+                        CASE "a"
+                            this.sel_start = 1: this.sel_end = LEN(this.buffer)
+                        CASE "v" 'paste something into an input field
+                            IF this.sel_start AND this.sel_end AND (this.sel_start <> this.sel_end) THEN
+                                IF this.sel_start < this.sel_end THEN
+                                    this.buffer = MID$(this.buffer, 1, this.sel_start - 1) + _CLIPBOARD$ + MID$(this.buffer, this.sel_end + 1, LEN(this.buffer))
+                                ELSE
+                                    this.buffer = MID$(this.buffer, 1, this.sel_end - 1) + _CLIPBOARD$ + MID$(this.buffer, this.sel_start + 1, LEN(this.buffer))
+                                END IF
+                            ELSE
+                                this.buffer = MID$(this.buffer, 1, this.cursor) + _CLIPBOARD$ + MID$(this.buffer, this.cursor + 1, LEN(this.buffer))
+                            END IF
+                        CASE "c" 'copy something from an input field
+                            IF this.sel_start AND this.sel_end AND (this.sel_start <> this.sel_end) THEN
+                                IF this.sel_start < this.sel_end THEN
+                                    _CLIPBOARD$ = MID$(this.buffer, this.sel_start, this.sel_end - this.sel_start + 1)
+                                ELSE
+                                    _CLIPBOARD$ = MID$(this.buffer, this.sel_end, this.sel_start - this.sel_end + 1)
+                                END IF
+                            ELSE
+                                _CLIPBOARD$ = this.buffer
+                            END IF
+                        CASE ELSE
+                            this.buffer = MID$(this.buffer, 1, this.cursor) + bufferchar + MID$(this.buffer, this.cursor + 1, LEN(this.buffer))
+                            this.cursor = this.cursor + 1
+                            this.sel_start = 0: this.sel_end = 0
+                    END SELECT
+                ELSE 'just normally insert a character at current cursor position
+                    this.buffer = MID$(this.buffer, 1, this.cursor) + bufferchar + MID$(this.buffer, this.cursor + 1, LEN(this.buffer))
+                    this.cursor = this.cursor + 1
+                    this.sel_start = 0: this.sel_end = 0
+                END IF
+            ELSE
+                IF _KEYDOWN(100305) OR _KEYDOWN(100306) THEN
+                    IF invokeleft THEN this.cursor = _INSTRREV(MID$(this.buffer, 1, this.cursor - 1), " ")
+                    IF invokeright THEN this.cursor = INSTR(MID$(this.buffer, this.cursor + 1, LEN(this.buffer)), " ") + this.cursor
+                ELSE
+                    IF invokeleft THEN IF this.cursor > 0 THEN this.cursor = this.cursor - 1
+                    IF invokeright THEN IF this.cursor < LEN(this.buffer) THEN this.cursor = this.cursor + 1
+                END IF
+            END IF
+
+            'selection management
+            IF this.sel_start AND this.sel_end AND (this.sel_start <> this.sel_end) AND (invokeempty OR invokedelete) THEN 'deleting with selection
+                IF this.sel_start < this.sel_end THEN
+                    this.buffer = MID$(this.buffer, 1, this.sel_start - 1) + MID$(this.buffer, this.sel_end + 1, LEN(this.buffer))
+                    this.cursor = this.sel_start
+                ELSE
+                    this.buffer = MID$(this.buffer, 1, this.sel_end - 1) + MID$(this.buffer, this.sel_start + 1, LEN(this.buffer))
+                    this.cursor = this.sel_end
+                END IF
+                this.sel_start = 0: this.sel_end = 0
+            ELSE 'deleting only one character
+                IF this.name = activeelement AND invokedelete THEN 'backspace
+                    this.buffer = MID$(this.buffer, 1, this.cursor - 1) + MID$(this.buffer, this.cursor + 1, LEN(this.buffer))
+                    this.cursor = this.cursor - 1
+                    this.sel_start = 0: this.sel_end = 0
+                ELSEIF this.name = activeelement AND invokeempty THEN 'delete
+                    this.buffer = MID$(this.buffer, 1, this.cursor) + MID$(this.buffer, this.cursor + 2, LEN(this.buffer))
+                    this.sel_start = 0: this.sel_end = 0
+                END IF
+            END IF
         END IF
-        IF (this.selected OR this.name = activeelement) AND invokeempty THEN
+        IF (this.selected OR this.name = activeelement) AND invokeempty AND (_KEYDOWN(100303) OR _KEYDOWN(100304)) THEN 'delete the entire buffer with shift+delete
             this.buffer = ""
+            this.cursor = 0
+            this.sel_start = 0: this.sel_end = 0
         END IF
 
         'script-dependent recursive functions
-        DIM AS _FLOAT x, y, w, h
+        DIM AS _FLOAT x, y, w, h, p
         x = VAL(getexpos$(e))
         y = VAL(geteypos$(e))
         w = VAL(getewidth$(e))
         h = VAL(geteheight$(e))
+        p = VAL(getepadding$(e))
 
-        IF mouse.x > x AND mouse.y > y AND mouse.x < x + w AND mouse.y < y + h THEN
-            drawcolor = col&(this.hovercolor)
+        IF mouse.x > x AND mouse.y > y AND mouse.x < x + w AND mouse.y < y + h AND (elementlock = 0 OR elementlock = e) THEN
+            IF this.name = activeelement THEN
+                drawcolor = col&("blue")
+            ELSE
+                drawcolor = col&(this.hovercolor)
+            END IF
             IF _KEYDOWN(100303) OR _KEYDOWN(100304) THEN 'Shift + Mouse = Select
                 IF mouse.left AND (this.type = "input" OR this.type = "dropdown") THEN
                     IF this.selected = -1 THEN this.selected = 0 ELSE this.selected = -1
@@ -209,10 +287,37 @@ SUB displayelement (this AS element, e AS INTEGER, arguments AS STRING) 'parses 
                 END IF
             ELSE 'No Shift + Mouse = Trigger action if existent
                 IF mouse.left AND this.action <> "" THEN
-                    dothis "action=" + this.action + ";" + getcurrentinputvalues$
-                ELSEIF mouse.left AND this.action = "" THEN
+                    dothis "action=" + this.action + ";" + getcurrentinputvalues$(-1)
+                ELSEIF mouse.left AND this.type = "switch" AND (TIMER - this.statelock > 1) THEN
+                    IF this.state = 0 THEN this.state = -1: this.statelock = TIMER ELSE this.state = 0: this.statelock = TIMER
+                ELSEIF mouse.left AND this.action = "" AND activeelement <> this.name AND (this.type = "input") THEN
                     activeelement = this.name
+                    this.sel_start = 0: this.sel_end = 0
                 END IF
+
+                IF mouse.scroll THEN
+                    this.scroll = this.scroll + mouse.scroll
+                END IF
+            END IF
+
+            sel_leftbound = x + ((LEN(this.text) + 1) * _FONTWIDTH(font_normal))
+            sel_rightbound = x + ((LEN(this.text) + 1 + LEN(this.buffer)) * _FONTWIDTH(font_normal))
+            IF mouse.x > sel_leftbound AND mouse.x < sel_rightbound AND mouse.left AND this.action = "" THEN
+                charcount = (sel_rightbound - sel_leftbound) / _FONTWIDTH(font_normal)
+                mousehoverchar = INT(((mouse.x - sel_leftbound) / (sel_rightbound - sel_leftbound)) * charcount) + 1
+
+                IF invokedeselect THEN
+                    invokedeselect = 0
+                    this.sel_start = 0: this.sel_end = 0
+                END IF
+                IF this.sel_start THEN
+                    this.sel_end = mousehoverchar
+                ELSE
+                    this.sel_start = mousehoverchar
+                    this.cursor = mousehoverchar
+                END IF
+
+                elementlock = e 'locks all actions to only the current element
             END IF
         ELSEIF this.name = activeelement OR this.selected THEN
             drawcolor = col&("blue")
@@ -222,52 +327,161 @@ SUB displayelement (this AS element, e AS INTEGER, arguments AS STRING) 'parses 
 
         IF debug = -1 THEN rectangle "x=" + lst$(x) + ";y=" + lst$(y) + ";w=" + lst$(w) + ";h=" + lst$(h) + ";round=0;style=" + this.style + ";angle=" + this.angle, _RGBA(255, 0, 50, 255)
 
+        'display element
         _FONT font_normal
         SELECT CASE this.type
             CASE "button"
-                x = x + (2 * global.padding)
                 rectangle "x=" + lst$(x) + ";y=" + lst$(y) + ";w=" + lst$(w) + ";h=" + lst$(h) + ";style=" + this.style + ";angle=" + this.angle + ";round=" + this.round, drawcolor
+                x = x + (2 * global.padding)
                 IF LCASE$(this.style) = "bf" THEN
                     COLOR col&("bg1"), col&("t")
                 ELSE
                     COLOR drawcolor, col&("t")
                 END IF
-                _PRINTSTRING (x + (2 * global.padding), y + global.padding), this.text + " " + this.buffer
+                _PRINTSTRING (x, y + global.padding), this.text + " " + this.buffer
             CASE "input"
                 underlinedistance = -2
-                LINE (x + _FONTWIDTH(font_normal), y + h + underlinedistance)-(x + w, y + h + underlinedistance), drawcolor
+                LINE (x, y + h + underlinedistance)-(x + w - (2 * global.padding), y + h + underlinedistance), drawcolor
                 COLOR drawcolor, col&("t")
-                _PRINTSTRING (x + (2 * global.padding), y + global.padding), this.text + " " + this.buffer
+                _PRINTSTRING (x, y + global.padding), this.text + " " + this.buffer
             CASE "text"
                 COLOR drawcolor, col&("t")
-                _PRINTSTRING (x + (2 * global.padding), y + global.padding), this.text + " " + this.buffer
+                _PRINTSTRING (x, y + global.padding), this.text + " " + this.buffer
             CASE "time"
                 COLOR drawcolor, col&("t")
-                _PRINTSTRING (x + (2 * global.padding), y + global.padding), TIME$
+                this.text = TIME$
+                _PRINTSTRING (x, y + global.padding), this.text
             CASE "date"
                 COLOR drawcolor, col&("t")
-                _PRINTSTRING (x + (2 * global.padding), y + global.padding), DATE$
+                this.text = DATE$
+                _PRINTSTRING (x, y + global.padding), this.text
             CASE "title"
                 _FONT font_big
                 COLOR drawcolor, col&("t")
-                _PRINTSTRING (x + (2 * global.padding), y + global.padding), this.text
+                _PRINTSTRING (x, y + global.padding), this.text
                 _FONT font_normal
             CASE "line"
-                LINE (x + (2 * global.padding), y)-(x + w - (2 * global.padding), y), drawcolor
+                LINE (x, y)-(x + w - (2 * global.padding), y), drawcolor
             CASE "box"
                 rectangle "x=" + lst$(x) + ";y=" + lst$(y) + ";w=" + lst$(w) + ";h=" + lst$(h) + ";style=" + this.style + ";angle=" + this.angle + ";round=" + this.round, drawcolor
+            CASE "switch"
+                w = w + h + global.margin
+                IF this.state = -1 THEN this.style = "bf" ELSE this.style = "b"
+                rectangle "x=" + lst$(x) + ";y=" + lst$(y) + ";w=" + lst$(h) + ";h=" + lst$(h) + ";style=" + this.style + ";round=" + lst$(h), drawcolor
+                COLOR drawcolor, col&("t")
+                _PRINTSTRING (x + h + global.margin, y + global.padding), this.text + " " + switchword$(this.state)
+            CASE "list"
+                rectangle "x=" + lst$(x) + ";y=" + lst$(y) + ";w=" + lst$(w) + ";h=" + lst$(h) + ";style=" + this.style + ";angle=" + this.angle + ";round=" + this.round, drawcolor
+                x = x + (2 * global.padding)
+                SELECT CASE this.name
+                    CASE "nodelist"
+                        searchnode$ = getargument$(getcurrentinputvalues$(0), "nodetarget")
+                        nodecount = getnodecount(searchnode$)
+                        DIM AS STRING nodearray(0)
+                        getnodearray nodearray(), searchnode$
+                        IF UBOUND(nodearray) > 0 THEN
+                            IF this.scroll > UBOUND(nodearray) THEN this.scroll = UBOUND(nodearray)
+                            IF this.scroll < 0 THEN this.scroll = 0
+                            n = this.scroll
+                            DO: n = n + 1
+                                listitemy = y + global.padding + ((global.margin + _FONTHEIGHT(font_normal)) * (n - 1))
+
+                                IF mouse.x > x - (2 * global.padding) AND mouse.x < x + w - (2 * global.padding) AND mouse.y > listitemy AND mouse.y < listitemy + _FONTHEIGHT(font_normal) THEN
+                                    COLOR col&("blue"), col&("t")
+                                ELSE
+                                    COLOR drawcolor, col&("t")
+                                END IF
+
+                                IF listitemy + _FONTHEIGHT(font_normal) < y + h THEN
+                                    'fetch node info based on array
+                                    DIM AS STRING listitem(3)
+                                    listitem(1) = nodearray(n)
+                                    listitem(2) = getnodeinfo$("date", listitem(1)) + " @ " + getnodeinfo$("time", listitem(1))
+                                    listitem(3) = getnodeinfo$("type", listitem(1))
+
+                                    'display node info
+                                    DO: li = li + 1
+                                        listitemx = x + ((w / UBOUND(listitem)) * (li - 1))
+                                        _PRINTSTRING (listitemx, listitemy), listitem(li)
+                                    LOOP UNTIL li = UBOUND(listitem)
+                                    ERASE listitem 'clean up array, will otherwise produce errors when dimming again
+                                END IF
+                            LOOP UNTIL n = UBOUND(nodearray) OR (listitemy + _FONTHEIGHT(font_normal) >= y + h)
+                        END IF
+                    CASE "linklist"
+                END SELECT
         END SELECT
+
+        'display cursor
+        IF this.type = "input" THEN
+            IF this.sel_start AND this.sel_end AND (this.sel_start <> this.sel_end) THEN
+            ELSE
+                IF TIMER MOD 2 = 0 THEN
+                    cursoroffset = -1
+                    cursorx = x + (_FONTWIDTH(font_normal) * (LEN(this.text) + this.cursor + 1)) + cursoroffset
+                    LINE (cursorx, y + global.padding - 2)-(cursorx, y + _FONTHEIGHT(font_normal) + global.padding + 2), drawcolor, BF
+                END IF
+            END IF
+        END IF
+
+        'display selection
+        IF this.sel_start AND this.sel_end AND (this.sel_start <> this.sel_end) THEN
+            COLOR drawcolor, col&("selected")
+            IF this.sel_start < this.sel_end THEN
+                _PRINTSTRING (x + (_FONTWIDTH(font_normal) * (LEN(this.text) + this.sel_start)), y + global.padding), MID$(this.buffer, this.sel_start, this.sel_end - this.sel_start + 1)
+            ELSE
+                _PRINTSTRING (x + (_FONTWIDTH(font_normal) * (LEN(this.text) + this.sel_end)), y + global.padding), MID$(this.buffer, this.sel_end, this.sel_start - this.sel_end + 1)
+            END IF
+        END IF
+        IF (this.sel_start OR this.sel_end) AND mouse.left = 0 THEN
+            invokedeselect = -1
+        END IF
     END IF
 END SUB
 
-FUNCTION getcurrentinputvalues$
+FUNCTION getnodeinfo$ (attribute AS STRING, target AS STRING)
+    file$ = path$(target)
+    IF _FILEEXISTS(file$) THEN
+        freen = FREEFILE
+        OPEN file$ FOR INPUT AS #freen
+        IF EOF(freen) = 0 THEN
+            DO
+                INPUT #freen, nodeline$
+                info$ = getargument$(nodeline$, attribute)
+                IF info$ <> "" THEN
+                    CLOSE #freen
+                    getnodeinfo$ = info$
+                    EXIT FUNCTION
+                END IF
+            LOOP UNTIL EOF(freen) = -1
+        END IF
+        CLOSE #freen
+    END IF
+END FUNCTION
+
+FUNCTION switchword$ (state AS _BYTE)
+    IF state = -1 THEN
+        switchword$ = "On"
+    ELSE
+        switchword$ = "Off"
+    END IF
+END FUNCTION
+
+FUNCTION getcurrentinputvalues$ (killbuffer AS _BYTE)
     DIM buffer AS STRING
     IF UBOUND(element) > 0 THEN
         DO: e = e + 1
             IF element(e).view = currentview AND element(e).name <> "commandline" THEN
-                buffer = buffer + element(e).name + "=" + element(e).buffer + ";"
+                IF element(e).buffer <> "" THEN buffer = buffer + element(e).name + "=" + element(e).buffer + ";"
+                IF killbuffer THEN element(e).buffer = ""
             ELSEIF element(e).view = currentview AND element(e).name = "commandline" THEN
-                buffer = buffer + element(e).buffer + ";"
+                buffer = buffer + element(e).buffer
+                IF killbuffer THEN element(e).buffer = ""
+            END IF
+            IF element(e).type = "input" AND killbuffer THEN
+                element(e).cursor = 0
+                element(e).sel_start = 0
+                element(e).sel_end = 0
             END IF
         LOOP UNTIL e = UBOUND(element)
     END IF
@@ -317,9 +531,22 @@ FUNCTION getewidth$ (e AS INTEGER)
 END FUNCTION
 
 FUNCTION geteheight$ (e AS INTEGER)
-    IF element(e).type = "title" THEN element(e).h = lst$(_FONTHEIGHT(font_big) + (2 * global.padding))
-    IF element(e).h = "" THEN element(e).h = "25"
-    geteheight$ = element(e).h
+    IF element(e).type = "title" THEN geteheight$ = lst$(_FONTHEIGHT(font_big) + (2 * global.padding)): EXIT FUNCTION
+    IF element(e).h = "" THEN
+        geteheight$ = "25"
+    ELSEIF (element(e).h = "nextt" OR element(e).h = "next.top" OR element(e).h = "nt") AND e < UBOUND(element) THEN
+        geteheight$ = lst$(VAL(geteypos$(e + 1)) - (2 * global.margin) - VAL(geteypos$(e)))
+    ELSE
+        geteheight$ = element(e).h
+    END IF
+END FUNCTION
+
+FUNCTION getepadding$ (e AS INTEGER)
+    IF element(e).padding = "" THEN
+        getepadding$ = lst$(global.padding)
+    ELSE
+        getepadding$ = element(e).padding
+    END IF
 END FUNCTION
 
 SUB dothis (arguments AS STRING)
@@ -333,7 +560,10 @@ SUB dothis (arguments AS STRING)
         CASE "add.node"
             IF set(nodetarget) AND set(nodetype) THEN
                 nodecount = getnodecount(nodetarget)
-                nodecount = nodecount + 1 'adds a new node with the same name, but writes it into a separate file
+                IF nodecount > 0 THEN 'adds a new node with the same name, but writes it into a separate file
+                    nodecount = nodecount + 1
+                    nodetarget = nodetarget + "_" + lst$(nodecount)
+                END IF
                 add.node "target=" + nodetarget + ";type=" + nodetype
             ELSE
                 dothis "action=view.add.node"
@@ -345,11 +575,13 @@ SUB dothis (arguments AS STRING)
                 dothis "action=view.add.nodelink"
             END IF
         CASE "remove.node"
-            IF set(nodetarget) AND set(nodetype) THEN
-                add.node "target=" + nodetarget + ";type=" + nodetype
+            IF set(nodetarget) THEN
+                remove.node "target=" + nodetarget
             ELSE
                 dothis "action=view.remove.node"
             END IF
+        CASE "saveconfig"
+            saveconfig
         CASE "quit"
             SYSTEM
     END SELECT
@@ -385,6 +617,26 @@ SUB writenode (arguments AS STRING, this AS node)
     WRITE #filen, "name=" + this.name
     WRITE #filen, "type=" + this.type
     CLOSE #filen
+END SUB
+
+SUB remove.node (arguments AS STRING)
+    file$ = path$(getargument$(arguments, "target"))
+    IF _FILEEXISTS(file$) THEN
+        KILL file$
+    END IF
+END SUB
+
+SUB getnodearray (array() AS STRING, search AS STRING)
+    DIM searchn AS STRING
+    file$ = path$(search)
+    IF _FILEEXISTS(file$) THEN
+        REDIM _PRESERVE array(UBOUND(array) + 1) AS STRING: array(UBOUND(array)) = search
+        DO: nodecount = nodecount + 1
+            searchn = search + "_" + lst$(nodecount)
+            file$ = path$(searchn)
+            IF _FILEEXISTS(file$) THEN REDIM _PRESERVE array(UBOUND(array) + 1) AS STRING: array(UBOUND(array)) = searchn
+        LOOP UNTIL _FILEEXISTS(file$) = 0
+    END IF
 END SUB
 
 FUNCTION getnodecount (arguments AS STRING) 'counts the amount of nodes with a given name <target>
@@ -435,12 +687,23 @@ SUB loadconfig
     IF EOF(freen) = 0 THEN
         DO
             INPUT #freen, configline$
-            IF getargumentv(configline$, "padding") THEN global.padding = getargumentv(configline$, "padding")
-            IF getargumentv(configline$, "margin") THEN global.margin = getargumentv(configline$, "margin")
-            IF getargumentv(configline$, "round") THEN global.round = getargumentv(configline$, "round")
-            IF getargumentv(configline$, "stroke") THEN global.stroke = getargumentv(configline$, "stroke")
+            config$ = config$ + configline$
         LOOP UNTIL EOF(freen) = -1
     END IF
+    CLOSE #freen
+
+    global.padding = getargumentv(config$, "padding")
+    global.margin = getargumentv(config$, "margin")
+    global.round = getargumentv(config$, "round")
+    global.stroke = getargumentv(config$, "stroke")
+END SUB
+
+SUB saveconfig
+    config$ = "round=" + lst$(global.round) + ";margin=" + lst$(global.margin) + ";padding=" + lst$(global.padding) + ";stroke=" + lst$(global.stroke)
+    configfile$ = global.internalpath + "\config.dst"
+    freen = FREEFILE
+    OPEN configfile$ FOR OUTPUT AS #freen
+    WRITE #freen, config$
     CLOSE #freen
 END SUB
 
@@ -499,6 +762,7 @@ SUB loadui
                         element(eub).buffer = getargument$(uielement$, "buffer")
                         element(eub).round = getargument$(uielement$, "round")
                         element(eub).hovertext = getargument$(uielement$, "hovertext")
+                        element(eub).padding = getargument$(uielement$, "padding")
                         element(eub).selected = 0
                         element(eub).show = -1
 
@@ -753,6 +1017,8 @@ FUNCTION col& (colour AS STRING)
             col& = _RGBA(20, 20, 20, 255)
         CASE "ui2"
             col& = _RGBA(150, 150, 150, 255)
+        CASE "selected"
+            col& = _RGBA(200, 200, 220, 255)
         CASE "bg1"
             col& = _RGBA(230, 230, 230, 255)
         CASE "bg2"
