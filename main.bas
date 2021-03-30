@@ -9,7 +9,6 @@ DECLARE CUSTOMTYPE LIBRARY "code\direntry"
     SUB close_dir ()
     SUB get_next_entry (s AS STRING, flags AS LONG, file_size AS LONG)
 END DECLARE
-REDIM Dir(0) AS STRING, File(0) AS STRING
 
 loadconfig
 
@@ -34,7 +33,7 @@ END TYPE
 REDIM SHARED internal AS internal
 
 TYPE global
-    AS STRING nodepath, internalpath, skinpath
+    AS STRING nodepath, internalpath, license
     AS _UNSIGNED _INTEGER64 maxnodeid
     AS _FLOAT margin, padding, round, stroke
 END TYPE
@@ -54,9 +53,6 @@ END TYPE
 TYPE nodelink
     AS STRING origin, name, target, date, time
 END TYPE
-
-REDIM SHARED directories(0) AS STRING
-REDIM SHARED nodefiles(0) AS STRING
 
 'UI
 TYPE element
@@ -90,7 +86,15 @@ resetallvalues
 '------------- TESTING AREA ------------
 
 
+
 '-------------- MAIN AREA --------------
+
+'license activation
+'key$ = getargument$(arguments$, "key=")
+'SELECT CASE checkLicense(key$)
+'    CASE IS = 0
+'    CASE IS = -1
+'END SELECT
 
 loadui
 DO
@@ -203,24 +207,23 @@ SUB displayelement (elementindex AS INTEGER, keyhit AS INTEGER) 'parses abstract
     coord.y = VAL(geteypos$(elementindex))
     coord.w = VAL(getewidth$(elementindex))
     coord.h = VAL(geteheight$(elementindex))
-    p = VAL(getepadding$(elementindex))
 
     elementmousehandling this, elementindex, invoke, coord
 
     IF debug = -1 THEN rectangle "x=" + lst$(coord.x) + ";y=" + lst$(coord.y) + ";w=" + lst$(coord.w) + ";h=" + lst$(coord.h) + ";round=0;style=" + this.style + ";angle=" + this.angle, _RGBA(255, 0, 50, 255)
 
-    drawelement this, elementindex, coord, p
+    drawelement this, elementindex, coord
 
     elements(elementindex) = this
 END SUB
 
-SUB drawelement (this AS element, elementindex AS INTEGER, coord AS rectangle, p AS _FLOAT)
-    coord.y = coord.y + global.padding
+SUB drawelement (this AS element, elementindex AS INTEGER, coord AS rectangle)
     _FONT font_normal
     SELECT CASE this.type
         CASE "button"
-            rectangle "x=" + lst$(coord.x) + ";y=" + lst$(coord.y - global.padding) + ";w=" + lst$(coord.w) + ";h=" + lst$(coord.h) + ";style=" + this.style + ";angle=" + this.angle + ";round=" + this.round, this.drawcolor
+            rectangle "x=" + lst$(coord.x) + ";y=" + lst$(coord.y) + ";w=" + lst$(coord.w) + ";h=" + lst$(coord.h) + ";style=" + this.style + ";angle=" + this.angle + ";round=" + this.round, this.drawcolor
             coord.x = coord.x + (2 * global.padding)
+            coord.y = coord.y + global.padding
             IF LCASE$(this.style) = "bf" THEN
                 COLOR col&("bg1"), col&("t")
             ELSE
@@ -249,18 +252,19 @@ SUB drawelement (this AS element, elementindex AS INTEGER, coord AS rectangle, p
             _PRINTSTRING (coord.x, coord.y), this.text
             _FONT font_normal
         CASE "line"
-            LINE (coord.x, coord.y)-(coord.x + coord.w - (2 * global.padding), coord.y), this.drawcolor
+            LINE (coord.x, coord.y)-(coord.x + coord.w - global.padding, coord.y), this.drawcolor
         CASE "box"
             rectangle "x=" + lst$(coord.x) + ";y=" + lst$(coord.y) + ";w=" + lst$(coord.w) + ";h=" + lst$(coord.h) + ";style=" + this.style + ";angle=" + this.angle + ";round=" + this.round, this.drawcolor
         CASE "switch"
             coord.w = coord.w + coord.h + global.margin
             IF this.state = -1 THEN this.style = "bf" ELSE this.style = "b"
-            rectangle "x=" + lst$(coord.x) + ";y=" + lst$(coord.y) + ";w=" + lst$(coord.h) + ";h=" + lst$(coord.h) + ";style=" + this.style + ";round=" + lst$(coord.h), this.drawcolor
+            rectangle "x=" + lst$(coord.x) + ";y=" + lst$(coord.y) + ";w=" + lst$(_FONTHEIGHT(font_normal)) + ";h=" + lst$(_FONTHEIGHT(font_normal)) + ";style=" + this.style + ";round=0", this.drawcolor
             COLOR this.drawcolor, col&("t")
             _PRINTSTRING (coord.x + coord.h + global.margin, coord.y), this.text + " " + switchword$(this.state)
         CASE "list"
-            rectangle "x=" + lst$(coord.x) + ";y=" + lst$(coord.y - global.padding) + ";w=" + lst$(coord.w) + ";h=" + lst$(coord.h) + ";style=" + this.style + ";angle=" + this.angle + ";round=" + this.round, this.drawcolor
+            rectangle "x=" + lst$(coord.x) + ";y=" + lst$(coord.y) + ";w=" + lst$(coord.w) + ";h=" + lst$(coord.h) + ";style=" + this.style + ";angle=" + this.angle + ";round=" + this.round, this.drawcolor
             coord.x = coord.x + (2 * global.padding)
+            coord.y = coord.y + global.padding
             SELECT CASE this.name
                 CASE "nodelist"
                     searchnode$ = getargument$(getcurrentinputvalues$(0), "nodetarget")
@@ -482,11 +486,11 @@ SUB elementkeyhandling (this AS element, elementindex AS INTEGER, bufferchar AS 
         END IF
         resetselection this
     ELSE 'deleting only one character
-        IF invoke.back THEN 'backspace
+        IF invoke.back AND this.cursor > 0 THEN 'backspace
             this.buffer = MID$(this.buffer, 1, this.cursor - 1) + MID$(this.buffer, this.cursor + 1, LEN(this.buffer))
             this.cursor = this.cursor - 1
             resetselection this
-        ELSEIF invoke.delete THEN 'delete
+        ELSEIF invoke.delete AND this.cursor < LEN(this.buffer) THEN 'delete
             this.buffer = MID$(this.buffer, 1, this.cursor) + MID$(this.buffer, this.cursor + 2, LEN(this.buffer))
             resetselection this
         END IF
@@ -563,6 +567,24 @@ FUNCTION getnodeinfo$ (attribute AS STRING, target AS STRING)
         CLOSE #freen
     END IF
 END FUNCTION
+
+SUB getnodelinkarray (array() AS STRING, target AS STRING)
+    file$ = path$(target)
+    IF _FILEEXISTS(file$) THEN
+        freen = FREEFILE
+        OPEN file$ FOR INPUT AS #freen
+        IF EOF(freen) = 0 THEN
+            DO
+                INPUT #freen, nodeline$
+                IF MID$(nodeline$, 1, 5) = "link:" THEN
+                    REDIM _PRESERVE array(UBOUND(array) + 1) AS STRING
+                    array(UBOUND(array)) = MID$(nodeline$, 6, LEN(nodeline$))
+                END IF
+            LOOP UNTIL EOF(freen) = -1
+        END IF
+        CLOSE #freen
+    END IF
+END SUB
 
 FUNCTION switchword$ (state AS _BYTE)
     IF state = -1 THEN
@@ -670,20 +692,30 @@ SUB dothis (arguments AS STRING)
                     nodetarget = nodetarget + "_" + lst$(nodecount)
                 END IF
                 add.node "target=" + nodetarget + ";type=" + nodetype
+                dothis "action=view.main"
             ELSE
                 dothis "action=view.add.node"
             END IF
         CASE "add.nodelink"
             IF set(nodeorigin) AND set(linkname) AND set(nodetarget) THEN
                 add.nodelink "origin=" + nodeorigin + ";name=" + linkname + ";target=" + nodetarget
+                dothis "action=view.main"
             ELSE
                 dothis "action=view.add.nodelink"
             END IF
         CASE "remove.node"
             IF set(nodetarget) THEN
                 remove.node "target=" + nodetarget
+                dothis "action=view.main"
             ELSE
                 dothis "action=view.remove.node"
+            END IF
+        CASE "remove.nodelink"
+            IF set(nodeorigin) AND set(linkname) AND set(nodetarget) THEN
+                remove.nodelink "origin=" + nodeorigin + ";name=" + linkname + ";target=" + nodetarget
+                dothis "action=view.main"
+            ELSE
+                dothis "action=view.removelink"
             END IF
         CASE "saveconfig"
             saveconfig
@@ -725,10 +757,15 @@ SUB writenode (arguments AS STRING, this AS node)
 END SUB
 
 SUB remove.node (arguments AS STRING)
+
     file$ = path$(getargument$(arguments, "target"))
     IF _FILEEXISTS(file$) THEN
         KILL file$
     END IF
+END SUB
+
+SUB remove.nodelink (arguments AS STRING)
+    'TODO
 END SUB
 
 SUB getnodearray (array() AS STRING, search AS STRING)
@@ -801,10 +838,11 @@ SUB loadconfig
     global.margin = getargumentv(config$, "margin")
     global.round = getargumentv(config$, "round")
     global.stroke = getargumentv(config$, "stroke")
+    global.license = getargument$(config$, "license")
 END SUB
 
 SUB saveconfig
-    config$ = "round=" + lst$(global.round) + ";margin=" + lst$(global.margin) + ";padding=" + lst$(global.padding) + ";stroke=" + lst$(global.stroke)
+    config$ = "round=" + lst$(global.round) + ";margin=" + lst$(global.margin) + ";padding=" + lst$(global.padding) + ";stroke=" + lst$(global.stroke) + ";license=" + global.license
     configfile$ = global.internalpath + "\config.dst"
     freen = FREEFILE
     OPEN configfile$ FOR OUTPUT AS #freen
@@ -815,7 +853,8 @@ END SUB
 SUB loadui
     REDIM _PRESERVE viewname(0) AS STRING
 
-    fontr$ = "internal\fonts\PTMono-Regular.ttf" 'replace with file loaded from config file
+    'fontr$ = "internal\fonts\PTMono-Regular.ttf" 'replace with file loaded from config file
+    fontr$ = "C:\Windows\Fonts\consola.ttf"
     fonteb$ = "internal\fonts\OpenSans-ExtraBold.ttf"
     font_normal = _LOADFONT(fontr$, 16, "MONOSPACE")
     font_big = _LOADFONT(fonteb$, 48)
@@ -872,6 +911,10 @@ SUB loadui
 
                         IF elements(eub).type = "input" AND activeelement = 0 THEN
                             activeelement = eub
+                        END IF
+
+                        IF elements(eub).name = "license" THEN
+                            elements(eub).buffer = global.license
                         END IF
                     LOOP UNTIL EOF(freen)
                 END IF
@@ -948,19 +991,15 @@ SUB GetFileList (SearchDirectory AS STRING, DirList() AS STRING, FileList() AS S
 END SUB
 
 SUB getmaxnodeid
-    generatefilearrays
+    REDIM directories(0) AS STRING
+    REDIM nodefiles(0) AS STRING
+    GetFileList global.nodepath, directories(), nodefiles()
     IF UBOUND(nodefiles) > 0 THEN
         DO: f = f + 1
             checkval = VAL(MID$(nodefiles(f), 1, INSTR(nodefiles(f), ".")))
             IF checkval > global.maxnodeid THEN global.maxnodeid = checkval
         LOOP UNTIL f = UBOUND(nodefiles)
     END IF
-END SUB
-
-SUB generatefilearrays
-    REDIM directories(0) AS STRING
-    REDIM nodefiles(0) AS STRING
-    GetFileList global.nodepath, directories(), nodefiles()
 END SUB
 
 FUNCTION getargument$ (basestring AS STRING, argument AS STRING)
@@ -1111,6 +1150,81 @@ END SUB
 
 FUNCTION lst$ (number AS _FLOAT)
     lst$ = LTRIM$(STR$(number))
+END FUNCTION
+
+FUNCTION checkLicense (license$)
+    shellcmd$ = "cmd /c curl http://api.gumroad.com/v2/licenses/verify -d " + CHR$(34) + "product_permalink=XXun" + CHR$(34) + " -d " + CHR$(34) + "license_key=" + license$ + CHR$(34) + " > license.txt"
+    SHELL shellcmd$
+    DO: LOOP UNTIL _FILEEXISTS("license.txt") = -1
+    OPEN "license.txt" FOR INPUT AS #1
+    IF EOF(1) = 0 THEN
+        DO
+            LINE INPUT #1, licensecallback$
+            p = 0
+            u = 0
+            o = 0
+            DO
+                p = p + 1
+                IF MID$(licensecallback$, p, 1) = CHR$(34) THEN
+                    u = p
+                    DO: u = u + 1: LOOP UNTIL MID$(licensecallback$, u, 1) = CHR$(34)
+                    attribute$ = MID$(licensecallback$, p + 1, u - p - 1)
+                    IF attribute$ <> "purchase" AND attribute$ <> "custom_fields" AND attribute$ <> "How did you discover Datanet?" AND attribute$ <> "variants" THEN
+                        o = u
+                        DO: o = o + 1: LOOP UNTIL MID$(licensecallback$, o, 1) = "," OR MID$(licensecallback$, o, 1) = "}"
+                        IF MID$(licensecallback$, o - 1, 1) = CHR$(34) THEN
+                            value$ = MID$(licensecallback$, u + 3, o - u - 4)
+                        ELSE
+                            value$ = MID$(licensecallback$, u + 2, o - u - 2)
+                        END IF
+                        p = o
+                        SELECT CASE attribute$
+                            CASE IS = "success": success$ = value$
+                            CASE IS = "uses": uses = VAL(value$)
+                            CASE IS = "seller_id": sellerID$ = value$
+                            CASE IS = "product_id": productID$ = value$
+                            CASE IS = "product_name": productname$ = value$
+                            CASE IS = "permalink": permalink$ = value$
+                            CASE IS = "product_permalink": productpermalink$ = value$
+                            CASE IS = "email": email$ = value$
+                            CASE IS = "price": price = VAL(value$)
+                            CASE IS = "currency": currency$ = value$
+                            CASE IS = "quantity": quantity = VAL(value$)
+                            CASE IS = "order_number": ordernumber = VAL(value$)
+                            CASE IS = "sale_id": saleID$ = value$
+                            CASE IS = "sale_timestamp": saletimestamp$ = value$
+                            CASE IS = "purchaser_id": purchaserID = VAL(value$)
+                            CASE IS = "test": test$ = value$
+                            CASE IS = "How did you discover Datanet?": discovery$ = value$
+                            CASE IS = "license_key": licensekey$ = value$
+                            CASE IS = "ip_country": IPcountry$ = value$
+                            CASE IS = "is_gift_receiver_purchase": isgift$ = value$
+                            CASE IS = "refunded": refunded$ = value$
+                            CASE IS = "disputed": disputed$ = value$
+                            CASE IS = "dispute_won": disputewon$ = value$
+                            CASE IS = "id": id$ = value$
+                            CASE IS = "created_at": createdat$ = value$
+                            CASE IS = "variants": variants$ = value$
+                            CASE IS = "chargebacked": chargebacked$ = value$
+                            CASE IS = "ended_at": endedat$ = value$
+                            CASE IS = "failed_at": failedat$ = value$
+                        END SELECT
+                    ELSE
+                        DO: p = p + 1: LOOP UNTIL MID$(licensecallback$, p, 1) = "{" OR MID$(licensecallback$, p, 1) = "[" OR MID$(licensecallback$, p, 1) = ","
+                    END IF
+                    attribute$ = ""
+                    value$ = ""
+                END IF
+            LOOP UNTIL p >= LEN(licensecallback$)
+        LOOP UNTIL EOF(1) = -1
+    END IF
+    CLOSE #1
+    IF success$ = "true" AND uses < 100 AND productname$ = "Datanet" AND permalink$ = "XXun" AND licensekey$ = license$ AND endedat$ = "" AND failedat$ = "" THEN
+        KILL "license.txt"
+        checkLicense = -1
+    ELSE
+        checkLicense = 0
+    END IF
 END FUNCTION
 
 FUNCTION col& (colour AS STRING)
