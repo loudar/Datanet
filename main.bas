@@ -2,6 +2,7 @@ $EXEICON:'..\Targon Industries\DATANET\internal\ico\Datanet_1.ico'
 $RESIZE:ON
 REM $DYNAMIC
 
+_SCREENHIDE
 'file list by SMcNeill
 DECLARE CUSTOMTYPE LIBRARY "code\direntry"
     FUNCTION load_dir& (s AS STRING)
@@ -9,18 +10,6 @@ DECLARE CUSTOMTYPE LIBRARY "code\direntry"
     SUB close_dir ()
     SUB get_next_entry (s AS STRING, flags AS LONG, file_size AS LONG)
 END DECLARE
-
-loadconfig
-
-REDIM SHARED AS INTEGER screenresx, screenresy, winresx, winresy
-screenresx = _DESKTOPWIDTH
-screenresy = _DESKTOPHEIGHT
-winresx = screenresx * 0.5 'to be replaced with config-based factor
-winresy = screenresy * 0.5
-SCREEN _NEWIMAGE(winresx, winresy, 32)
-_SCREENMOVE (screenresx / 2) - (_WIDTH(0) / 2), (screenresy / 2) - (_HEIGHT(0) / 2)
-DO: LOOP UNTIL _SCREENEXISTS
-_TITLE "Datanet"
 
 'Variables
 TYPE internalsettings
@@ -36,6 +25,7 @@ TYPE global
     AS STRING nodepath, internalpath, license
     AS _UNSIGNED _INTEGER64 maxnodeid
     AS _FLOAT margin, padding, round, stroke
+    AS _BYTE licensestatus
 END TYPE
 REDIM SHARED global AS global
 
@@ -56,9 +46,9 @@ END TYPE
 
 'UI
 TYPE element
-    AS _BYTE show, acceptinput, allownumbers, allowtext, allowspecial, selected, state
-    AS STRING x, y, w, h, style, name, text, buffer, type, color, hovercolor, action, angle, view, round, hovertext, padding
-    AS INTEGER sel_start, sel_end, cursor
+    AS _BYTE show, acceptinput, allownumbers, allowtext, allowspecial, selected, state, deselect
+    AS STRING x, y, w, h, style, name, text, buffer, type, color, hovercolor, action, angle, view, round, hovertext, padding, mousestate
+    AS INTEGER sel_start, sel_end, cursor, items
     AS _UNSIGNED _INTEGER64 scroll
     AS _FLOAT statelock
     AS LONG drawcolor
@@ -72,7 +62,7 @@ END TYPE
 REDIM SHARED uisum(0) AS uisum
 REDIM SHARED AS STRING viewname(0), currentview
 TYPE invoke
-    AS _BYTE delete, back, select, right, left, deselect
+    AS _BYTE delete, back, select, right, left, deselect, jumptoend, jumptofront
 END TYPE
 REDIM SHARED AS LONG font_normal, font_big
 REDIM SHARED AS INTEGER elementlock, activeelement
@@ -83,18 +73,23 @@ END TYPE
 
 resetallvalues
 
+REDIM SHARED AS INTEGER screenresx, screenresy, winresx, winresy
+screenresx = _DESKTOPWIDTH
+screenresy = _DESKTOPHEIGHT
+winresx = screenresx * 0.5 'to be replaced with config-based factor
+winresy = screenresy * 0.5
+SCREEN _NEWIMAGE(winresx, winresy, 32)
+_SCREENMOVE (screenresx / 2) - (winresx / 2), (screenresy / 2) - (winresy / 2)
+_SCREENSHOW
+DO: LOOP UNTIL _SCREENEXISTS
+_TITLE "Datanet"
+
+
 '------------- TESTING AREA ------------
 
 
 
 '-------------- MAIN AREA --------------
-
-'license activation
-'key$ = getargument$(arguments$, "key=")
-'SELECT CASE checkLicense(key$)
-'    CASE IS = 0
-'    CASE IS = -1
-'END SELECT
 
 loadui
 DO
@@ -104,7 +99,6 @@ DO
     displayview keyhit
     _LIMIT internal.setting.fps
 LOOP
-SLEEP
 
 SUB checkresize
     IF _RESIZE THEN
@@ -186,16 +180,19 @@ SUB displayelement (elementindex AS INTEGER, keyhit AS INTEGER) 'parses abstract
                 activeelement = getnextelement(currentview, activeelement)
             END IF
         CASE 13 'enter
-            IF this.action = "" THEN
-                waituntilreleased keyhit
+            waituntilreleased keyhit
+            buffer$ = ""
+            IF this.action <> "" THEN buffer$ = "action=" + this.action + ";"
+            IF shiftdown THEN
                 activeelement = getnextelement(currentview, activeelement)
             ELSE
-                waituntilreleased keyhit
-                dothis "action=" + this.action + ";" + getcurrentinputvalues$(-1)
+                dothis buffer$ + getcurrentinputvalues$(-1)
             END IF
         CASE 21248: invoke.delete = -1 'delete
         CASE 19200: invoke.left = -1 'left arrow
         CASE 19712: invoke.right = -1 'right arrow
+        CASE 20224: invoke.jumptoend = -1 'end key
+        CASE 18176: invoke.jumptofront = -1 'home key
     END SELECT
 
     'mouse-dependent
@@ -212,12 +209,27 @@ SUB displayelement (elementindex AS INTEGER, keyhit AS INTEGER) 'parses abstract
 
     IF debug = -1 THEN rectangle "x=" + lst$(coord.x) + ";y=" + lst$(coord.y) + ";w=" + lst$(coord.w) + ";h=" + lst$(coord.h) + ";round=0;style=" + this.style + ";angle=" + this.angle, _RGBA(255, 0, 50, 255)
 
-    drawelement this, elementindex, coord
+    IF isexception(this.name) THEN this.buffer = getexceptionvalue$(this.name)
+
+    drawelement this, elementindex, coord, invoke
 
     elements(elementindex) = this
 END SUB
 
-SUB drawelement (this AS element, elementindex AS INTEGER, coord AS rectangle)
+FUNCTION isexception (elementname AS STRING)
+    SELECT CASE elementname
+        CASE "licensestatus": isexception = -1
+        CASE ELSE: isexception = 0
+    END SELECT
+END FUNCTION
+
+FUNCTION getexceptionvalue$ (elementname AS STRING)
+    SELECT CASE elementname
+        CASE "licensestatus": getexceptionvalue$ = switchword$("active", global.licensestatus)
+    END SELECT
+END FUNCTION
+
+SUB drawelement (this AS element, elementindex AS INTEGER, coord AS rectangle, invoke AS invoke)
     _FONT font_normal
     SELECT CASE this.type
         CASE "button"
@@ -260,7 +272,7 @@ SUB drawelement (this AS element, elementindex AS INTEGER, coord AS rectangle)
             IF this.state = -1 THEN this.style = "bf" ELSE this.style = "b"
             rectangle "x=" + lst$(coord.x) + ";y=" + lst$(coord.y) + ";w=" + lst$(_FONTHEIGHT(font_normal)) + ";h=" + lst$(_FONTHEIGHT(font_normal)) + ";style=" + this.style + ";round=0", this.drawcolor
             COLOR this.drawcolor, col&("t")
-            _PRINTSTRING (coord.x + coord.h + global.margin, coord.y), this.text + " " + switchword$(this.state)
+            _PRINTSTRING (coord.x + coord.h + global.margin, coord.y), this.text + " " + switchword$("on", this.state)
         CASE "list"
             rectangle "x=" + lst$(coord.x) + ";y=" + lst$(coord.y) + ";w=" + lst$(coord.w) + ";h=" + lst$(coord.h) + ";style=" + this.style + ";angle=" + this.angle + ";round=" + this.round, this.drawcolor
             coord.x = coord.x + (2 * global.padding)
@@ -281,7 +293,7 @@ SUB drawelement (this AS element, elementindex AS INTEGER, coord AS rectangle)
                             IF mouse.x > coord.x - (2 * global.padding) AND mouse.x < coord.x + coord.w - (2 * global.padding) AND mouse.y > listitemy AND mouse.y < listitemy + _FONTHEIGHT(font_normal) THEN
                                 COLOR col&("blue"), col&("t")
                             ELSE
-                                COLOR drawcolor, col&("t")
+                                COLOR this.drawcolor, col&("t")
                             END IF
 
                             IF listitemy + _FONTHEIGHT(font_normal) < coord.y + coord.h THEN
@@ -301,36 +313,47 @@ SUB drawelement (this AS element, elementindex AS INTEGER, coord AS rectangle)
                                 ERASE listitem 'clean up array, will otherwise produce errors when dimming again
                             END IF
                         LOOP UNTIL n = UBOUND(nodearray) OR (listitemy + _FONTHEIGHT(font_normal) >= coord.y - global.padding + coord.h)
+                        this.items = n - this.scroll
                     END IF
                 CASE "linklist"
             END SELECT
     END SELECT
 
-    'display cursor
+    'display selection/cursor
     IF textselectable(this) AND active(elementindex) THEN
-        IF this.sel_start AND this.sel_end AND (this.sel_start <> this.sel_end) THEN
+        IF longselection(this) THEN
+            COLOR this.drawcolor, col&("selected")
+            minx = min(this.sel_start, this.sel_end)
+            maxx = max(this.sel_start, this.sel_end)
+            _PRINTSTRING (coord.x + (_FONTWIDTH(font_normal) * (LEN(this.text) + min(this.sel_start, this.sel_end))), coord.y), MID$(this.buffer, min(this.sel_start, this.sel_end), max(this.sel_start, this.sel_end) - min(this.sel_start, this.sel_end) + 1)
         ELSE
             IF TIMER MOD 2 = 0 THEN
                 cursoroffset = -1
                 cursorx = coord.x + (_FONTWIDTH(font_normal) * (LEN(this.text) + this.cursor + 1)) + cursoroffset
-                LINE (cursorx, coord.y + global.padding - 2)-(cursorx, coord.y + _FONTHEIGHT(font_normal) + global.padding + 2), drawcolor, BF
+                LINE (cursorx, coord.y - 2)-(cursorx, coord.y + _FONTHEIGHT(font_normal) + 2), this.drawcolor, BF
             END IF
         END IF
     END IF
-
-    'display selection
-    IF this.sel_start AND this.sel_end AND (this.sel_start <> this.sel_end) THEN
-        COLOR drawcolor, col&("selected")
-        IF this.sel_start < this.sel_end THEN
-            _PRINTSTRING (coord.x + (_FONTWIDTH(font_normal) * (LEN(this.text) + this.sel_start)), coord.y + global.padding), MID$(this.buffer, this.sel_start, this.sel_end - this.sel_start + 1)
-        ELSE
-            _PRINTSTRING (coord.x + (_FONTWIDTH(font_normal) * (LEN(this.text) + this.sel_end)), coord.y + global.padding), MID$(this.buffer, this.sel_end, this.sel_start - this.sel_end + 1)
-        END IF
-    END IF
     IF (this.sel_start OR this.sel_end) AND mouse.left = 0 THEN
-        invoke.deselect = -1
+        this.deselect = -1
     END IF
 END SUB
+
+FUNCTION active (elementindex AS INTEGER)
+    IF elementindex = activeelement THEN active = -1 ELSE active = 0
+END FUNCTION
+
+FUNCTION selectable (this AS element)
+    IF this.type = "input" OR this.type = "button" THEN selectable = -1 ELSE selectable = 0
+END FUNCTION
+
+FUNCTION textselectable (this AS element)
+    IF this.type = "input" OR this.type = "text" OR this.type = "time" OR this.type = "date" THEN textselectable = -1 ELSE textselectable = 0
+END FUNCTION
+
+FUNCTION longselection (this AS element)
+    IF this.sel_start AND this.sel_end AND (this.sel_start <> this.sel_end) THEN longselection = -1 ELSE longselection = 0
+END FUNCTION
 
 SUB waituntilreleased (keyhit AS INTEGER)
     DO: LOOP UNTIL _KEYDOWN(keyhit) = 0: keyhit = 0
@@ -378,12 +401,8 @@ FUNCTION isspecialchar (keyhit AS INTEGER)
 END FUNCTION
 
 SUB elementmousehandling (this AS element, elementindex AS INTEGER, invoke AS invoke, coord AS rectangle)
-    IF mouse.x > coord.x AND mouse.x < coord.x + coord.w AND mouse.y > coord.y AND mouse.y < coord.y + coord.h AND (elementlock = 0 OR elementlock = elementindex) THEN
-        IF active(elementindex) THEN
-            this.drawcolor = col&("blue")
-        ELSE
-            this.drawcolor = col&(this.hovercolor)
-        END IF
+    this.mousestate = ""
+    IF mouseinbounds(coord) AND (elementlock = 0 OR elementlock = elementindex) THEN
         IF ctrldown THEN
             IF mouse.left AND selectable(this) THEN
                 IF this.selected = -1 THEN this.selected = 0 ELSE this.selected = -1
@@ -391,6 +410,7 @@ SUB elementmousehandling (this AS element, elementindex AS INTEGER, invoke AS in
             END IF
         ELSE
             IF mouse.left AND this.action <> "" THEN
+                this.mousestate = "interact"
                 dothis "action=" + this.action + ";" + getcurrentinputvalues$(-1)
             ELSEIF mouse.left AND this.type = "switch" AND (TIMER - this.statelock > 1) THEN
                 IF this.state = 0 THEN this.state = -1: this.statelock = TIMER ELSE this.state = 0: this.statelock = TIMER
@@ -404,31 +424,52 @@ SUB elementmousehandling (this AS element, elementindex AS INTEGER, invoke AS in
             END IF
         END IF
 
-        sel_leftbound = coord.x + ((LEN(this.text) + 1) * _FONTWIDTH(font_normal))
-        sel_rightbound = coord.x + ((LEN(this.text) + 1 + LEN(this.buffer)) * _FONTWIDTH(font_normal))
-        IF mouse.x > sel_leftbound AND mouse.x < sel_rightbound AND mouse.left AND this.action = "" THEN
-            charcount = (sel_rightbound - sel_leftbound) / _FONTWIDTH(font_normal)
-            mousehoverchar = INT(((mouse.x - sel_leftbound) / (sel_rightbound - sel_leftbound)) * charcount) + 1
+        IF textselectable(this) THEN
+            sel_leftbound = coord.x + ((LEN(this.text) + 1) * _FONTWIDTH(font_normal))
+            sel_rightbound = coord.x + ((LEN(this.text) + 1 + LEN(this.buffer)) * _FONTWIDTH(font_normal))
+            IF mouse.x > sel_leftbound AND mouse.x < sel_rightbound AND mouse.left AND this.action = "" THEN
+                charcount = (sel_rightbound - sel_leftbound) / _FONTWIDTH(font_normal)
+                mousehoverchar = INT(((mouse.x - sel_leftbound) / (sel_rightbound - sel_leftbound)) * charcount) + 1
 
-            IF invoke.deselect THEN
-                invoke.deselect = 0
-                this.sel_start = 0: this.sel_end = 0
-            END IF
-            IF this.sel_start THEN
-                this.sel_end = mousehoverchar
-            ELSE
-                this.sel_start = mousehoverchar
-                this.cursor = mousehoverchar
-            END IF
+                IF this.deselect THEN
+                    this.deselect = 0
+                    this.sel_start = 0: this.sel_end = 0
+                END IF
+                IF this.sel_start THEN
+                    this.sel_end = mousehoverchar
+                    this.cursor = this.sel_end
+                ELSE
+                    this.sel_start = mousehoverchar
+                    this.cursor = mousehoverchar
+                END IF
 
-            elementlock = elementindex 'locks all actions to only the current element
+                elementlock = elementindex 'locks all actions to only the current element
+            END IF
         END IF
-    ELSEIF active(elementindex) OR this.selected THEN
-        this.drawcolor = col&("blue")
+        IF this.mousestate = "" THEN this.mousestate = "hover"
+    ELSEIF active(elementindex) THEN
+        this.mousestate = "active"
+    ELSEIF this.selected THEN
+        this.mousestate = "selected"
     ELSE
-        this.drawcolor = col&(this.color)
+        this.mousestate = ""
     END IF
+
+    SELECT CASE this.mousestate
+        CASE "active"
+            this.drawcolor = col&("blue")
+        CASE "selected"
+            this.drawcolor = col&("blue")
+        CASE "hover"
+            this.drawcolor = col&(this.hovercolor)
+        CASE ""
+            this.drawcolor = col&(this.color)
+    END SELECT
 END SUB
+
+FUNCTION mouseinbounds (coord AS rectangle)
+    IF mouse.x > coord.x AND mouse.x < coord.x + coord.w AND mouse.y > coord.y AND mouse.y < coord.y + coord.h THEN mouseinbounds = -1 ELSE mouseinbounds = 0
+END FUNCTION
 
 SUB elementkeyhandling (this AS element, elementindex AS INTEGER, bufferchar AS STRING, invoke AS invoke)
     IF (this.selected OR active(elementindex)) AND invoke.delete AND shiftdown THEN 'delete the entire buffer with shift+delete
@@ -446,13 +487,13 @@ SUB elementkeyhandling (this AS element, elementindex AS INTEGER, bufferchar AS 
                 CASE "a"
                     this.sel_start = 1: this.sel_end = LEN(this.buffer)
                 CASE "v" 'paste something into an input field
-                    IF this.sel_start AND this.sel_end AND (this.sel_start <> this.sel_end) THEN
+                    IF longselection(this) THEN
                         paste this.buffer, this.sel_start, this.sel_end
                     ELSE
                         this.buffer = MID$(this.buffer, 1, this.cursor) + _CLIPBOARD$ + MID$(this.buffer, this.cursor + 1, LEN(this.buffer))
                     END IF
                 CASE "c" 'copy something from an input field
-                    IF this.sel_start AND this.sel_end AND (this.sel_start <> this.sel_end) THEN
+                    IF longselection(this) THEN
                         copy this.buffer, this.sel_start, this.sel_end
                     ELSE
                         _CLIPBOARD$ = this.buffer
@@ -473,10 +514,12 @@ SUB elementkeyhandling (this AS element, elementindex AS INTEGER, bufferchar AS 
             IF invoke.left THEN IF this.cursor > 0 THEN this.cursor = this.cursor - 1
             IF invoke.right THEN IF this.cursor < LEN(this.buffer) THEN this.cursor = this.cursor + 1
         END IF
+        IF invoke.jumptoend THEN this.cursor = LEN(this.buffer)
+        IF invoke.jumptofront THEN this.cursor = 0
     END IF
 
     'selection management
-    IF this.sel_start AND this.sel_end AND (this.sel_start <> this.sel_end) AND (invoke.delete OR invoke.back) THEN 'deleting with selection
+    IF longselection(this) AND (invoke.delete OR invoke.back) THEN 'deleting with selection
         IF this.sel_start < this.sel_end THEN
             this.buffer = MID$(this.buffer, 1, this.sel_start - 1) + MID$(this.buffer, this.sel_end + 1, LEN(this.buffer))
             this.cursor = this.sel_start
@@ -528,18 +571,6 @@ SUB insertbufferchar (this AS element, insert AS STRING)
     resetselection this
 END SUB
 
-FUNCTION active (elementindex AS INTEGER)
-    IF elementindex = activeelement THEN active = -1 ELSE active = 0
-END FUNCTION
-
-FUNCTION selectable (this AS element)
-    IF this.type = "input" OR this.type = "button" THEN selectable = -1 ELSE selectable = 0
-END FUNCTION
-
-FUNCTION textselectable (this AS element)
-    IF this.type = "input" THEN textselectable = -1 ELSE textselectable = 0
-END FUNCTION
-
 FUNCTION ctrldown
     IF _KEYDOWN(100305) OR _KEYDOWN(100306) THEN ctrldown = -1 ELSE ctrldown = 0
 END FUNCTION
@@ -586,11 +617,20 @@ SUB getnodelinkarray (array() AS STRING, target AS STRING)
     END IF
 END SUB
 
-FUNCTION switchword$ (state AS _BYTE)
+FUNCTION switchword$ (word AS STRING, state AS _BYTE)
+    DIM AS STRING state1, state2
+    SELECT CASE LCASE$(word)
+        CASE "on"
+            state1 = "On"
+            state2 = "Off"
+        CASE "active"
+            state1 = "Active"
+            state2 = "Inactive"
+    END SELECT
     IF state = -1 THEN
-        switchword$ = "On"
+        switchword$ = state1
     ELSE
-        switchword$ = "Off"
+        switchword$ = state2
     END IF
 END FUNCTION
 
@@ -677,12 +717,13 @@ FUNCTION getepadding$ (e AS INTEGER)
 END FUNCTION
 
 SUB dothis (arguments AS STRING)
-    DIM AS STRING nodeorigin, nodetype, nodetarget, linkname
+    DIM AS STRING nodeorigin, nodetype, nodetarget, linkname, license
     nodeorigin = getargument$(arguments, "nodeorigin")
     nodetype = getargument$(arguments, "nodetype")
     nodetarget = getargument$(arguments, "nodetarget")
     linkname = getargument$(arguments, "linkname")
     action$ = getargument$(arguments, "action")
+    license = getargument$(arguments, "license")
     SELECT CASE action$
         CASE "add.node"
             IF set(nodetarget) AND set(nodetype) THEN
@@ -715,8 +756,17 @@ SUB dothis (arguments AS STRING)
                 remove.nodelink "origin=" + nodeorigin + ";name=" + linkname + ";target=" + nodetarget
                 dothis "action=view.main"
             ELSE
-                dothis "action=view.removelink"
+                dothis "action=view.remove.nodelink"
             END IF
+        CASE "add.license"
+            IF set(license) THEN
+                add.license "license=" + license
+                dothis "action=view.main"
+            ELSE
+                dothis "action=view.add.license"
+            END IF
+        CASE "check.license"
+            loadconfig
         CASE "saveconfig"
             saveconfig
         CASE "quit"
@@ -726,6 +776,16 @@ SUB dothis (arguments AS STRING)
         CASE "view"
             currentview = MID$(action$, INSTR(action$, ".") + 1, LEN(action$))
     END SELECT
+END SUB
+
+SUB add.license (arguments AS STRING)
+    DIM license AS STRING
+    license = getargument$(arguments, "license")
+    IF checkLicense(license) THEN
+        global.license = _DEFLATE$(license)
+        license = ""
+        saveconfig
+    END IF
 END SUB
 
 SUB add.node (arguments AS STRING)
@@ -839,6 +899,8 @@ SUB loadconfig
     global.round = getargumentv(config$, "round")
     global.stroke = getargumentv(config$, "stroke")
     global.license = getargument$(config$, "license")
+    IF checkLicense(_INFLATE$(global.license)) = 0 THEN setlicense "", 0: saveconfig
+    IF global.license <> "" THEN global.licensestatus = -1
 END SUB
 
 SUB saveconfig
@@ -850,15 +912,19 @@ SUB saveconfig
     CLOSE #freen
 END SUB
 
-SUB loadui
-    REDIM _PRESERVE viewname(0) AS STRING
-
-    'fontr$ = "internal\fonts\PTMono-Regular.ttf" 'replace with file loaded from config file
-    fontr$ = "C:\Windows\Fonts\consola.ttf"
+SUB loadfonts
+    'fontr$ = "C:\Windows\Fonts\consola.ttf"
+    fontr$ = "internal\fonts\PTMono-Regular.ttf" 'replace with file loaded from config file
     fonteb$ = "internal\fonts\OpenSans-ExtraBold.ttf"
     font_normal = _LOADFONT(fontr$, 16, "MONOSPACE")
     font_big = _LOADFONT(fonteb$, 48)
     _FONT font_normal
+END SUB
+
+SUB loadui
+    REDIM _PRESERVE viewname(0) AS STRING
+
+    loadfonts
 
     freen = FREEFILE
     viewfile$ = global.internalpath + "\views.dui"
@@ -911,6 +977,7 @@ SUB loadui
 
                         IF elements(eub).type = "input" AND activeelement = 0 THEN
                             activeelement = eub
+                            elements(eub).selected = -1
                         END IF
 
                         IF elements(eub).name = "license" THEN
@@ -1226,6 +1293,11 @@ FUNCTION checkLicense (license$)
         checkLicense = 0
     END IF
 END FUNCTION
+
+SUB setlicense (license AS STRING, status AS _BYTE)
+    global.license = license
+    global.licensestatus = status
+END SUB
 
 FUNCTION col& (colour AS STRING)
     SELECT CASE colour
