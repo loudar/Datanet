@@ -48,7 +48,7 @@ END TYPE
 'UI
 TYPE element
     AS _BYTE show, acceptinput, allownumbers, allowtext, allowspecial, selected, state, deselect
-    AS STRING x, y, w, h, style, name, text, buffer, type, color, hovercolor, action, angle, view, round, hovertext, padding
+    AS STRING x, y, w, h, style, name, text, buffer, type, color, hovercolor, action, angle, view, round, hovertext, padding, url
     AS INTEGER sel_start, sel_end, cursor, items, hovertextwait, hoverx, hovery
     AS _UNSIGNED _INTEGER64 scroll
     AS _FLOAT statelock, hovertime
@@ -311,8 +311,8 @@ SUB displayelement (elementindex AS INTEGER, keyhit AS INTEGER) 'parses abstract
     elementkeyhandling this, elementindex, bufferchar, invoke
 
     DIM coord AS rectangle
-
     getcoord coord, elementindex
+
     elementmousehandling this, elementindex, invoke, coord
     IF isexception(this.name) THEN this.buffer = getexceptionvalue$(this.name)
     drawelement this, elementindex, coord, invoke
@@ -372,11 +372,13 @@ SUB drawelement (this AS element, elementindex AS INTEGER, coord AS rectangle, i
         CASE "box"
             rectangle "x=" + lst$(coord.x) + ";y=" + lst$(coord.y) + ";w=" + lst$(coord.w) + ";h=" + lst$(coord.h) + ";style=" + this.style + ";angle=" + this.angle + ";round=" + this.round, this.drawcolor
         CASE "switch"
-            coord.w = coord.w + coord.h + global.margin
+            boxsize = _FONTHEIGHT(font_normal) * 0.75
+            boxoffset = 0
+            coord.w = coord.w + boxsize + global.margin
             IF this.state = -1 THEN this.style = "bf" ELSE this.style = "b"
-            rectangle "x=" + lst$(coord.x) + ";y=" + lst$(coord.y) + ";w=" + lst$(_FONTHEIGHT(font_normal)) + ";h=" + lst$(_FONTHEIGHT(font_normal)) + ";style=" + this.style + ";round=0", this.drawcolor
+            rectangle "x=" + lst$(coord.x) + ";y=" + lst$(coord.y + boxoffset) + ";w=" + lst$(boxsize) + ";h=" + lst$(boxsize) + ";style=" + this.style + ";round=0", this.drawcolor
             COLOR this.drawcolor, col&("t")
-            _PRINTSTRING (coord.x + coord.h + global.margin, coord.y), this.text + " " + switchword$("on", this.state)
+            _PRINTSTRING (coord.x + boxsize + global.margin, coord.y), this.text + " " + switchword$("on", this.state)
         CASE "list"
             rectangle "x=" + lst$(coord.x) + ";y=" + lst$(coord.y) + ";w=" + lst$(coord.w) + ";h=" + lst$(coord.h) + ";style=" + this.style + ";angle=" + this.angle + ";round=" + this.round, this.drawcolor
             coord.x = coord.x + (2 * global.padding)
@@ -524,8 +526,9 @@ SUB elementmousehandling (this AS element, elementindex AS INTEGER, invoke AS in
         ELSE
             IF mouse.left AND this.action <> "" THEN
                 dothis "action=" + this.action + ";" + getcurrentinputvalues$(-1)
-            ELSEIF mouse.left AND this.type = "switch" AND (TIMER - this.statelock > 1) THEN
-                IF this.state = 0 THEN this.state = -1: this.statelock = TIMER ELSE this.state = 0: this.statelock = TIMER
+            ELSEIF mouse.left AND this.type = "switch" AND this.statelock = 0 THEN
+                IF this.state = 0 THEN this.state = -1 ELSE this.state = 0
+                this.statelock = -1
             ELSEIF mouse.left AND this.action = "" AND NOT active(elementindex) AND textselectable(this) THEN
                 activeelement = elementindex
                 this.sel_start = 0: this.sel_end = 0
@@ -558,7 +561,7 @@ SUB elementmousehandling (this AS element, elementindex AS INTEGER, invoke AS in
                 elementlock = elementindex 'locks all actions to only the current element
             END IF
         END IF
-        this.drawcolor = col&(this.hovercolor)
+        IF NOT active(elementindex) THEN this.drawcolor = col&(this.hovercolor)
     ELSEIF active(elementindex) THEN
         this.drawcolor = col&("blue")
     ELSEIF this.selected THEN
@@ -566,7 +569,7 @@ SUB elementmousehandling (this AS element, elementindex AS INTEGER, invoke AS in
     ELSE
         this.drawcolor = col&(this.color)
     END IF
-    IF mouse.left = 0 THEN elementlock = 0
+    IF mouse.left = 0 THEN elementlock = 0: this.statelock = 0
 END SUB
 
 FUNCTION mouseinbounds (coord AS rectangle)
@@ -625,6 +628,12 @@ SUB elementkeyhandling (this AS element, elementindex AS INTEGER, bufferchar AS 
                     insertbufferchar this, bufferchar
             END SELECT
         ELSE
+            IF longselection(this) THEN
+                sel_start = min(this.sel_start, this.sel_end)
+                sel_end = max(this.sel_start, this.sel_end)
+                this.buffer = deletepart$(this.buffer, sel_start, sel_end)
+                this.cursor = sel_start - 1
+            END IF
             insertbufferchar this, bufferchar
         END IF
     ELSE
@@ -641,13 +650,10 @@ SUB elementkeyhandling (this AS element, elementindex AS INTEGER, bufferchar AS 
 
     'selection management
     IF longselection(this) AND (invoke.delete OR invoke.back) THEN 'deleting with selection
-        IF this.sel_start < this.sel_end THEN
-            this.buffer = MID$(this.buffer, 1, this.sel_start - 1) + MID$(this.buffer, this.sel_end + 1, LEN(this.buffer))
-            this.cursor = this.sel_start
-        ELSE
-            this.buffer = MID$(this.buffer, 1, this.sel_end - 1) + MID$(this.buffer, this.sel_start + 1, LEN(this.buffer))
-            this.cursor = this.sel_end
-        END IF
+        sel_start = min(this.sel_start, this.sel_end)
+        sel_end = max(this.sel_start, this.sel_end)
+        this.buffer = deletepart$(this.buffer, sel_start, sel_end)
+        this.cursor = sel_start - 1
         resetselection this
     ELSE 'deleting only one character
         IF invoke.back AND this.cursor > 0 THEN 'backspace
@@ -660,6 +666,10 @@ SUB elementkeyhandling (this AS element, elementindex AS INTEGER, bufferchar AS 
         END IF
     END IF
 END SUB
+
+FUNCTION deletepart$ (basestring AS STRING, delstart AS INTEGER, delend AS INTEGER)
+    deletepart$ = MID$(basestring, 1, delstart - 1) + MID$(basestring, delend + 1, LEN(basestring))
+END FUNCTION
 
 SUB resetselection (this AS element)
     this.sel_start = 0: this.sel_end = 0
@@ -761,6 +771,7 @@ FUNCTION getcurrentinputvalues$ (killbuffer AS _BYTE)
             IF elements(e).view = currentview AND elements(e).name <> "commandline" THEN
                 IF elements(e).buffer <> "" THEN buffer = buffer + elements(e).name + "=" + elements(e).buffer + ";"
                 IF killbuffer THEN elements(e).buffer = ""
+                IF elements(e).url <> "" THEN buffer = buffer + "url=" + elements(e).url + ";"
             ELSEIF elements(e).view = currentview AND elements(e).name = "commandline" THEN
                 buffer = buffer + elements(e).buffer
                 IF killbuffer THEN elements(e).buffer = ""
@@ -819,8 +830,8 @@ END FUNCTION
 
 FUNCTION geteheight$ (e AS INTEGER)
     IF elements(e).type = "title" THEN geteheight$ = lst$(_FONTHEIGHT(font_big) + (2 * global.padding)): EXIT FUNCTION
-    IF elements(e).h = "" THEN
-        geteheight$ = "25"
+    IF elements(e).h = "0" THEN
+        geteheight$ = lst$(_FONTHEIGHT(font_normal) + (2 * global.padding))
     ELSEIF (elements(e).h = "nextt" OR elements(e).h = "next.top" OR elements(e).h = "nt") AND e < UBOUND(elements) THEN
         geteheight$ = lst$(VAL(geteypos$(e + 1)) - (2 * global.margin) - VAL(geteypos$(e)))
     ELSE
@@ -837,13 +848,14 @@ FUNCTION getepadding$ (e AS INTEGER)
 END FUNCTION
 
 SUB dothis (arguments AS STRING)
-    DIM AS STRING nodeorigin, nodetype, nodetarget, linkname, license
+    DIM AS STRING nodeorigin, nodetype, nodetarget, linkname, license, url
     nodeorigin = getargument$(arguments, "nodeorigin")
     nodetype = getargument$(arguments, "nodetype")
     nodetarget = getargument$(arguments, "nodetarget")
     linkname = getargument$(arguments, "linkname")
     action$ = getargument$(arguments, "action")
     license = getargument$(arguments, "license")
+    url = getargument$(arguments, "url")
     SELECT CASE action$
         CASE "add.node"
             IF set(nodetarget) AND set(nodetype) THEN
@@ -885,6 +897,8 @@ SUB dothis (arguments AS STRING)
             ELSE
                 dothis "action=view.add.license"
             END IF
+        CASE "web"
+            openbrowser url
         CASE "check.license"
             loadconfig
         CASE "saveconfig"
@@ -1025,10 +1039,11 @@ END SUB
 
 SUB saveconfig
     config$ = "round=" + lst$(global.round) + ";margin=" + lst$(global.margin) + ";padding=" + lst$(global.padding) + ";stroke=" + lst$(global.stroke) + ";license=" + global.license
+    config$ = config$
     configfile$ = global.internalpath + "\config.dst"
     freen = FREEFILE
     OPEN configfile$ FOR OUTPUT AS #freen
-    WRITE #freen, config$
+    PRINT #freen, config$
     CLOSE #freen
 END SUB
 
@@ -1094,6 +1109,7 @@ SUB loadui
                         elements(eub).hovertext = getargument$(uielement$, "hovertext")
                         elements(eub).hovertextwait = getargumentv(uielement$, "hovertextwait")
                         elements(eub).padding = getargument$(uielement$, "padding")
+                        elements(eub).url = getargument$(uielement$, "url")
                         elements(eub).selected = 0
 
                         IF elements(eub).type = "input" AND activeelement = 0 THEN
@@ -1395,13 +1411,17 @@ FUNCTION checkLicense (license$)
         LOOP UNTIL EOF(1) = -1
     END IF
     CLOSE #1
-    IF success$ = "true" AND uses < 100 AND productname$ = "Datanet" AND permalink$ = "XXun" AND licensekey$ = license$ AND endedat$ = "" AND failedat$ = "" THEN
-        KILL "license.txt"
+    KILL "license.txt"
+    IF success$ = "true" AND productname$ = "Datanet" AND permalink$ = "XXun" AND licensekey$ = license$ AND endedat$ = "" AND failedat$ = "" THEN
         checkLicense = -1
     ELSE
         checkLicense = 0
     END IF
 END FUNCTION
+
+SUB openbrowser (url AS STRING)
+    SHELL _HIDE "rundll32 url.dll,FileProtocolHandler " + url
+END SUB
 
 SUB setlicense (license AS STRING, status AS _BYTE)
     global.license = license
