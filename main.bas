@@ -95,7 +95,8 @@ loadui
 DO
     CLS
     checkresize
-    keyhit = checkcontrols
+    checkmouse
+    keyhit = checkkeyboard
     displayview keyhit
     _LIMIT internal.setting.fps
 LOOP
@@ -114,11 +115,6 @@ SUB setwindow (winresx AS INTEGER, winresy AS INTEGER)
     SCREEN _NEWIMAGE(winresx, winresy, 32)
     DO: LOOP UNTIL _SCREENEXISTS
 END SUB
-
-FUNCTION checkcontrols
-    checkmouse
-    checkcontrols = checkkeyboard
-END FUNCTION
 
 SUB checkmouse
     mouse.scroll = 0
@@ -147,8 +143,31 @@ SUB displayview (keyhit AS INTEGER) 'displays a "view"
             END IF
         LOOP UNTIL e = UBOUND(elements)
     END IF
-    resetsum
+    IF UBOUND(elements) > 0 THEN
+        e = 0: DO: e = e + 1
+            IF elements(e).view = currentview THEN
+                displaymenu e, keyhit
+            END IF
+        LOOP UNTIL e = UBOUND(elements)
+    END IF
     _DISPLAY
+END SUB
+
+SUB displaymenu (elementindex AS INTEGER, keyhit AS INTEGER)
+    DIM this AS element
+    this = elements(elementindex)
+
+    DIM coord AS rectangle
+    coord.x = VAL(getexpos$(elementindex))
+    coord.y = VAL(geteypos$(elementindex))
+    coord.w = VAL(getewidth$(elementindex))
+    coord.h = VAL(geteheight$(elementindex))
+
+    IF mouse.right AND mouseinbounds(coord) THEN
+        contextwidth = 100
+        contextheight = 100
+        rectangle "x=" + lst$(mouse.x) + ";y=" + lst$(mouse.y) + ";w=" + lst$(contextwidth) + ";h=" + lst$(contextheight) + ";round=0;angle=0;style=b", col&("ui")
+    END IF
 END SUB
 
 SUB displayelement (elementindex AS INTEGER, keyhit AS INTEGER) 'parses abstract coordinates into discrete coordinates
@@ -252,12 +271,12 @@ SUB drawelement (this AS element, elementindex AS INTEGER, coord AS rectangle, i
             _PRINTSTRING (coord.x, coord.y), this.text + " " + this.buffer
         CASE "time"
             COLOR this.drawcolor, col&("t")
-            this.text = TIME$
-            _PRINTSTRING (coord.x, coord.y), this.text
+            this.buffer = TIME$
+            _PRINTSTRING (coord.x, coord.y), this.text + " " + this.buffer
         CASE "date"
             COLOR this.drawcolor, col&("t")
-            this.text = DATE$
-            _PRINTSTRING (coord.x, coord.y), this.text
+            this.buffer = DATE$
+            _PRINTSTRING (coord.x, coord.y), this.text + " " + this.buffer
         CASE "title"
             _FONT font_big
             COLOR this.drawcolor, col&("t")
@@ -327,7 +346,7 @@ SUB drawelement (this AS element, elementindex AS INTEGER, coord AS rectangle, i
             maxx = max(this.sel_start, this.sel_end)
             _PRINTSTRING (coord.x + (_FONTWIDTH(font_normal) * (LEN(this.text) + min(this.sel_start, this.sel_end))), coord.y), MID$(this.buffer, min(this.sel_start, this.sel_end), max(this.sel_start, this.sel_end) - min(this.sel_start, this.sel_end) + 1)
         ELSE
-            IF TIMER MOD 2 = 0 THEN
+            IF TIMER MOD 2 = 0 AND typable(this) THEN
                 cursoroffset = -1
                 cursorx = coord.x + (_FONTWIDTH(font_normal) * (LEN(this.text) + this.cursor + 1)) + cursoroffset
                 LINE (cursorx, coord.y - 2)-(cursorx, coord.y + _FONTHEIGHT(font_normal) + 2), this.drawcolor, BF
@@ -345,6 +364,10 @@ END FUNCTION
 
 FUNCTION selectable (this AS element)
     IF this.type = "input" OR this.type = "button" THEN selectable = -1 ELSE selectable = 0
+END FUNCTION
+
+FUNCTION typable (this AS element)
+    IF this.type = "input" THEN typable = -1 ELSE typable = 0
 END FUNCTION
 
 FUNCTION textselectable (this AS element)
@@ -414,7 +437,7 @@ SUB elementmousehandling (this AS element, elementindex AS INTEGER, invoke AS in
                 dothis "action=" + this.action + ";" + getcurrentinputvalues$(-1)
             ELSEIF mouse.left AND this.type = "switch" AND (TIMER - this.statelock > 1) THEN
                 IF this.state = 0 THEN this.state = -1: this.statelock = TIMER ELSE this.state = 0: this.statelock = TIMER
-            ELSEIF mouse.left AND this.action = "" AND NOT active(elementindex) AND (this.type = "input") THEN
+            ELSEIF mouse.left AND this.action = "" AND NOT active(elementindex) AND textselectable(this) THEN
                 activeelement = elementindex
                 this.sel_start = 0: this.sel_end = 0
             END IF
@@ -429,7 +452,7 @@ SUB elementmousehandling (this AS element, elementindex AS INTEGER, invoke AS in
             sel_rightbound = coord.x + ((LEN(this.text) + 1 + LEN(this.buffer)) * _FONTWIDTH(font_normal))
             IF mouse.x > sel_leftbound AND mouse.x < sel_rightbound AND mouse.left AND this.action = "" THEN
                 charcount = (sel_rightbound - sel_leftbound) / _FONTWIDTH(font_normal)
-                mousehoverchar = INT(((mouse.x - sel_leftbound) / (sel_rightbound - sel_leftbound)) * charcount) + 1
+                mousehoverchar = INT((((mouse.x - sel_leftbound) / (sel_rightbound - sel_leftbound)) * charcount) + 0.5) + 1
 
                 IF this.deselect THEN
                     this.deselect = 0
@@ -454,12 +477,13 @@ SUB elementmousehandling (this AS element, elementindex AS INTEGER, invoke AS in
     ELSE
         this.mousestate = ""
     END IF
+    IF mouse.left = 0 THEN elementlock = 0
 
     SELECT CASE this.mousestate
         CASE "active"
             this.drawcolor = col&("blue")
         CASE "selected"
-            this.drawcolor = col&("blue")
+            this.drawcolor = col&("green")
         CASE "hover"
             this.drawcolor = col&(this.hovercolor)
         CASE ""
@@ -481,6 +505,7 @@ SUB elementkeyhandling (this AS element, elementindex AS INTEGER, bufferchar AS 
     IF active(elementindex) = 0 THEN EXIT SUB
 
     'BELOW CODE WILL ONLY RUN IF ELEMENT IS ACTIVE!
+
     IF bufferchar <> "" THEN
         IF ctrldown THEN 'ctrl
             SELECT CASE LCASE$(bufferchar)
@@ -1088,17 +1113,6 @@ FUNCTION set (tocheck AS STRING) 'just returns if a string variable has a value 
         set = 0: EXIT FUNCTION
     END IF
 END FUNCTION
-
-SUB resetsum 'explicitly doesn't use REDIM because that bugs out
-    IF UBOUND(uisum) > 0 THEN
-        DO: u = u + 1
-            uisum(u).x = 0
-            uisum(u).y = 0
-            uisum(u).f = ""
-        LOOP UNTIL u = UBOUND(uisum)
-    END IF
-    REDIM _PRESERVE uisum(0) AS uisum
-END SUB
 
 FUNCTION stringvalue$ (basestring AS STRING, argument AS STRING)
     IF LEN(basestring) > 0 THEN
