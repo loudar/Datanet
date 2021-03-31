@@ -33,6 +33,7 @@ TYPE mouse
     AS _FLOAT x, y
     AS _BYTE left, right
     AS INTEGER scroll
+    AS _UNSIGNED _INTEGER64 lefttime, righttime
 END TYPE
 REDIM SHARED mouse AS mouse
 
@@ -47,11 +48,13 @@ END TYPE
 'UI
 TYPE element
     AS _BYTE show, acceptinput, allownumbers, allowtext, allowspecial, selected, state, deselect
-    AS STRING x, y, w, h, style, name, text, buffer, type, color, hovercolor, action, angle, view, round, hovertext, padding, mousestate
-    AS INTEGER sel_start, sel_end, cursor, items
+    AS STRING x, y, w, h, style, name, text, buffer, type, color, hovercolor, action, angle, view, round, hovertext, padding
+    AS INTEGER sel_start, sel_end, cursor, items, hovertextwait, hoverx, hovery
     AS _UNSIGNED _INTEGER64 scroll
-    AS _FLOAT statelock
+    AS _FLOAT statelock, hovertime
     AS LONG drawcolor
+    AS _BYTE contextopen, allowcontextclose
+    AS INTEGER contextx, contexty
     value AS _FLOAT
 END TYPE
 REDIM SHARED elements(0) AS element
@@ -66,6 +69,7 @@ TYPE invoke
 END TYPE
 REDIM SHARED AS LONG font_normal, font_big
 REDIM SHARED AS INTEGER elementlock, activeelement
+REDIM SHARED AS _BYTE contextopen, lockuicall
 
 TYPE rectangle
     AS _FLOAT x, y, w, h
@@ -95,7 +99,8 @@ loadui
 DO
     CLS
     checkresize
-    keyhit = checkcontrols
+    checkmouse
+    keyhit = checkkeyboard
     displayview keyhit
     _LIMIT internal.setting.fps
 LOOP
@@ -115,11 +120,6 @@ SUB setwindow (winresx AS INTEGER, winresy AS INTEGER)
     DO: LOOP UNTIL _SCREENEXISTS
 END SUB
 
-FUNCTION checkcontrols
-    checkmouse
-    checkcontrols = checkkeyboard
-END FUNCTION
-
 SUB checkmouse
     mouse.scroll = 0
     DO
@@ -127,7 +127,9 @@ SUB checkmouse
         mouse.y = _MOUSEY
         mouse.scroll = mouse.scroll + _MOUSEWHEEL
         mouse.left = _MOUSEBUTTON(1)
+        IF mouse.left THEN mouse.lefttime = TIMER
         mouse.right = _MOUSEBUTTON(2)
+        IF mouse.right THEN mouse.righttime = TIMER
     LOOP WHILE _MOUSEINPUT
 END SUB
 
@@ -147,9 +149,129 @@ SUB displayview (keyhit AS INTEGER) 'displays a "view"
             END IF
         LOOP UNTIL e = UBOUND(elements)
     END IF
-    resetsum
+    IF UBOUND(elements) > 0 THEN
+        e = 0: DO: e = e + 1
+            IF elements(e).view = currentview THEN
+                displaymenu e, keyhit
+            END IF
+        LOOP UNTIL e = UBOUND(elements)
+    END IF
     _DISPLAY
 END SUB
+
+SUB displaymenu (elementindex AS INTEGER, keyhit AS INTEGER)
+    DIM this AS element
+    this = elements(elementindex)
+
+    DIM coord AS rectangle
+    getcoord coord, elementindex
+
+    IF mouse.right AND mouseinbounds(coord) THEN
+        opencontext this
+    END IF
+    IF NOT mouse.right THEN this.allowcontextclose = -1
+    IF this.contextopen AND contextopen THEN displaycontext this
+
+    IF TIMER - this.hovertime >= this.hovertextwait AND this.hovertime > 0 AND this.hovertext <> "" AND NOT this.contextopen THEN
+        hoverpadding = 3
+        hoveryoffset = -_FONTHEIGHT(font_normal)
+        LINE (mouse.x - hoverpadding, mouse.y - hoverpadding + hoveryoffset)-(mouse.x + (LEN(this.hovertext) * _FONTWIDTH(font_normal)) + hoverpadding, mouse.y + _FONTHEIGHT(font_normal) + hoverpadding + hoveryoffset), col&("bg1"), BF
+        LINE (mouse.x - hoverpadding, mouse.y - hoverpadding + hoveryoffset)-(mouse.x + (LEN(this.hovertext) * _FONTWIDTH(font_normal)) + hoverpadding, mouse.y + _FONTHEIGHT(font_normal) + hoverpadding + hoveryoffset), col&("ui"), B
+        COLOR col&("ui"), col&("t")
+        _PRINTSTRING (mouse.x, mouse.y + hoveryoffset), this.hovertext
+    END IF
+
+    elements(elementindex) = this 'needed to save the changed data into the original elements array
+END SUB
+
+SUB opencontext (this AS element)
+    this.contextopen = -1
+    contextopen = -1
+    this.contextx = mouse.x
+    this.contexty = mouse.y
+    this.allowcontextclose = 0
+END SUB
+
+SUB getcoord (coord AS rectangle, elementindex AS INTEGER)
+    coord.x = VAL(getexpos$(elementindex))
+    coord.y = VAL(geteypos$(elementindex))
+    coord.w = VAL(getewidth$(elementindex))
+    coord.h = VAL(geteheight$(elementindex))
+END SUB
+
+SUB displaycontext (this AS element)
+    REDIM _PRESERVE contextdata(0) AS STRING
+    getcontextarray contextdata(), this
+    maxlen = getmaxstringlen(contextdata())
+    contextpadding = 6
+    contextwidth = (maxlen * _FONTWIDTH(font_normal)) + (2 * contextpadding)
+    contextheight = (UBOUND(contextdata) * _FONTHEIGHT(font_normal)) + (2 * contextpadding)
+
+    DIM contextcoord AS rectangle
+    contextcoord.x = this.contextx - 1
+    contextcoord.y = this.contexty - 1
+    contextcoord.w = contextwidth
+    contextcoord.h = contextheight
+    IF (mouse.left OR mouse.right) AND NOT mouseinbounds(contextcoord) AND this.allowcontextclose THEN this.contextopen = 0: contextopen = 0
+
+    IF UBOUND(contextdata) > 0 THEN
+        LINE (contextcoord.x, contextcoord.y)-(contextcoord.x + contextcoord.w, contextcoord.y + contextcoord.h), col&("bg1"), BF
+        LINE (contextcoord.x, contextcoord.y)-(contextcoord.x + contextcoord.w, contextcoord.y + contextcoord.h), col&("ui"), B
+
+        contextentry = 0: DO: contextentry = contextentry + 1
+            DIM entrycoord AS rectangle
+            entrycoord.x = contextcoord.x
+            entrycoord.y = contextcoord.y + ((_FONTHEIGHT(font_normal) + contextpadding) * (contextentry - 1))
+            entrycoord.w = contextcoord.w
+            entrycoord.h = _FONTHEIGHT(font_normal) + contextpadding
+
+            IF mouseinbounds(entrycoord) THEN
+                IF mouse.left THEN uicall LCASE$(contextdata(contextentry)), this: lockuicall = -1 ELSE lockuicall = 0
+                COLOR col&("blue"), col&("t")
+                LINE (entrycoord.x + 1, entrycoord.y + 1)-(entrycoord.x + entrycoord.w - 1, entrycoord.y + entrycoord.h - 1), col&("bg3"), BF
+            ELSE
+                COLOR col&("ui"), col&("t")
+            END IF
+
+            _PRINTSTRING (this.contextx + contextpadding, entrycoord.y + contextpadding), contextdata(contextentry)
+        LOOP UNTIL contextentry = UBOUND(contextdata)
+    END IF
+END SUB
+
+SUB getcontextarray (array() AS STRING, this AS element)
+    IF textselectable(this) THEN addtostringarray array(), "Copy"
+    IF typable(this) THEN addtostringarray array(), "Paste"
+    IF this.action <> "" THEN addtostringarray array(), "Activate"
+END SUB
+
+SUB addtostringarray (array() AS STRING, toadd AS STRING)
+    REDIM _PRESERVE array(UBOUND(array) + 1) AS STRING
+    array(UBOUND(array)) = toadd
+END SUB
+
+FUNCTION getmaxstringlen (array() AS STRING)
+    DIM buffer AS _UNSIGNED _INTEGER64
+    IF UBOUND(array) > 0 THEN
+        DO: i = i + 1
+            IF LEN(array(i)) > buffer THEN
+                buffer = LEN(array(i))
+            END IF
+        LOOP UNTIL i = UBOUND(array)
+        getmaxstringlen = buffer: EXIT FUNCTION
+    ELSE
+        getmaxstringlen = 0: EXIT FUNCTION
+    END IF
+END FUNCTION
+
+FUNCTION getbufferchar$ (this AS element, keyhit AS INTEGER)
+    IF isnumchar(keyhit) AND this.allownumbers THEN
+        getbufferchar$ = CHR$(keyhit)
+    ELSEIF istextchar(keyhit) AND this.allowtext THEN
+        getbufferchar$ = CHR$(keyhit)
+    ELSEIF isspecialchar(keyhit) AND this.allowspecial THEN
+        getbufferchar$ = CHR$(keyhit)
+    END IF
+END FUNCTION
 
 SUB displayelement (elementindex AS INTEGER, keyhit AS INTEGER) 'parses abstract coordinates into discrete coordinates
     DIM this AS element
@@ -157,16 +279,7 @@ SUB displayelement (elementindex AS INTEGER, keyhit AS INTEGER) 'parses abstract
     DIM invoke AS invoke
     this = elements(elementindex)
 
-    'element-specific
-    IF active(elementindex) THEN
-        IF isnumchar(keyhit) AND this.allownumbers THEN
-            bufferchar = CHR$(keyhit)
-        ELSEIF istextchar(keyhit) AND this.allowtext THEN
-            bufferchar = CHR$(keyhit)
-        ELSEIF isspecialchar(keyhit) AND this.allowspecial THEN
-            bufferchar = CHR$(keyhit)
-        END IF
-    END IF
+    IF active(elementindex) THEN bufferchar = getbufferchar(this, keyhit)
 
     'general
     SELECT CASE keyhit
@@ -195,22 +308,13 @@ SUB displayelement (elementindex AS INTEGER, keyhit AS INTEGER) 'parses abstract
         CASE 18176: invoke.jumptofront = -1 'home key
     END SELECT
 
-    'mouse-dependent
     elementkeyhandling this, elementindex, bufferchar, invoke
 
-    'script-dependent recursive functions
     DIM coord AS rectangle
-    coord.x = VAL(getexpos$(elementindex))
-    coord.y = VAL(geteypos$(elementindex))
-    coord.w = VAL(getewidth$(elementindex))
-    coord.h = VAL(geteheight$(elementindex))
 
+    getcoord coord, elementindex
     elementmousehandling this, elementindex, invoke, coord
-
-    IF debug = -1 THEN rectangle "x=" + lst$(coord.x) + ";y=" + lst$(coord.y) + ";w=" + lst$(coord.w) + ";h=" + lst$(coord.h) + ";round=0;style=" + this.style + ";angle=" + this.angle, _RGBA(255, 0, 50, 255)
-
     IF isexception(this.name) THEN this.buffer = getexceptionvalue$(this.name)
-
     drawelement this, elementindex, coord, invoke
 
     elements(elementindex) = this
@@ -252,12 +356,12 @@ SUB drawelement (this AS element, elementindex AS INTEGER, coord AS rectangle, i
             _PRINTSTRING (coord.x, coord.y), this.text + " " + this.buffer
         CASE "time"
             COLOR this.drawcolor, col&("t")
-            this.text = TIME$
-            _PRINTSTRING (coord.x, coord.y), this.text
+            this.buffer = TIME$
+            _PRINTSTRING (coord.x, coord.y), this.text + " " + this.buffer
         CASE "date"
             COLOR this.drawcolor, col&("t")
-            this.text = DATE$
-            _PRINTSTRING (coord.x, coord.y), this.text
+            this.buffer = DATE$
+            _PRINTSTRING (coord.x, coord.y), this.text + " " + this.buffer
         CASE "title"
             _FONT font_big
             COLOR this.drawcolor, col&("t")
@@ -327,7 +431,7 @@ SUB drawelement (this AS element, elementindex AS INTEGER, coord AS rectangle, i
             maxx = max(this.sel_start, this.sel_end)
             _PRINTSTRING (coord.x + (_FONTWIDTH(font_normal) * (LEN(this.text) + min(this.sel_start, this.sel_end))), coord.y), MID$(this.buffer, min(this.sel_start, this.sel_end), max(this.sel_start, this.sel_end) - min(this.sel_start, this.sel_end) + 1)
         ELSE
-            IF TIMER MOD 2 = 0 THEN
+            IF (TIMER - mouse.lefttime) MOD 2 = 0 AND typable(this) THEN
                 cursoroffset = -1
                 cursorx = coord.x + (_FONTWIDTH(font_normal) * (LEN(this.text) + this.cursor + 1)) + cursoroffset
                 LINE (cursorx, coord.y - 2)-(cursorx, coord.y + _FONTHEIGHT(font_normal) + 2), this.drawcolor, BF
@@ -347,12 +451,16 @@ FUNCTION selectable (this AS element)
     IF this.type = "input" OR this.type = "button" THEN selectable = -1 ELSE selectable = 0
 END FUNCTION
 
+FUNCTION typable (this AS element)
+    IF this.type = "input" THEN typable = -1 ELSE typable = 0
+END FUNCTION
+
 FUNCTION textselectable (this AS element)
     IF this.type = "input" OR this.type = "text" OR this.type = "time" OR this.type = "date" THEN textselectable = -1 ELSE textselectable = 0
 END FUNCTION
 
 FUNCTION longselection (this AS element)
-    IF this.sel_start AND this.sel_end AND (this.sel_start <> this.sel_end) THEN longselection = -1 ELSE longselection = 0
+    IF this.sel_start > 0 AND this.sel_end > 0 AND (this.sel_start <> this.sel_end) THEN longselection = -1 ELSE longselection = 0
 END FUNCTION
 
 SUB waituntilreleased (keyhit AS INTEGER)
@@ -401,8 +509,13 @@ FUNCTION isspecialchar (keyhit AS INTEGER)
 END FUNCTION
 
 SUB elementmousehandling (this AS element, elementindex AS INTEGER, invoke AS invoke, coord AS rectangle)
-    this.mousestate = ""
-    IF mouseinbounds(coord) AND (elementlock = 0 OR elementlock = elementindex) THEN
+    IF this.hovertextwait = 0 THEN this.hovertextwait = 1
+    IF mouseinbounds(coord) THEN
+        IF this.hovertime = 0 OR this.hoverx <> mouse.x OR this.hovery <> mouse.y THEN this.hovertime = TIMER: this.hoverx = mouse.x: this.hovery = mouse.y
+    ELSE
+        this.hovertime = 0
+    END IF
+    IF mouseinbounds(coord) AND (elementlock = 0 OR elementlock = elementindex) AND NOT contextopen THEN
         IF ctrldown THEN
             IF mouse.left AND selectable(this) THEN
                 IF this.selected = -1 THEN this.selected = 0 ELSE this.selected = -1
@@ -410,11 +523,10 @@ SUB elementmousehandling (this AS element, elementindex AS INTEGER, invoke AS in
             END IF
         ELSE
             IF mouse.left AND this.action <> "" THEN
-                this.mousestate = "interact"
                 dothis "action=" + this.action + ";" + getcurrentinputvalues$(-1)
             ELSEIF mouse.left AND this.type = "switch" AND (TIMER - this.statelock > 1) THEN
                 IF this.state = 0 THEN this.state = -1: this.statelock = TIMER ELSE this.state = 0: this.statelock = TIMER
-            ELSEIF mouse.left AND this.action = "" AND NOT active(elementindex) AND (this.type = "input") THEN
+            ELSEIF mouse.left AND this.action = "" AND NOT active(elementindex) AND textselectable(this) THEN
                 activeelement = elementindex
                 this.sel_start = 0: this.sel_end = 0
             END IF
@@ -429,7 +541,7 @@ SUB elementmousehandling (this AS element, elementindex AS INTEGER, invoke AS in
             sel_rightbound = coord.x + ((LEN(this.text) + 1 + LEN(this.buffer)) * _FONTWIDTH(font_normal))
             IF mouse.x > sel_leftbound AND mouse.x < sel_rightbound AND mouse.left AND this.action = "" THEN
                 charcount = (sel_rightbound - sel_leftbound) / _FONTWIDTH(font_normal)
-                mousehoverchar = INT(((mouse.x - sel_leftbound) / (sel_rightbound - sel_leftbound)) * charcount) + 1
+                mousehoverchar = INT((((mouse.x - sel_leftbound) / (sel_rightbound - sel_leftbound)) * charcount) + 0.5)
 
                 IF this.deselect THEN
                     this.deselect = 0
@@ -446,30 +558,43 @@ SUB elementmousehandling (this AS element, elementindex AS INTEGER, invoke AS in
                 elementlock = elementindex 'locks all actions to only the current element
             END IF
         END IF
-        IF this.mousestate = "" THEN this.mousestate = "hover"
+        this.drawcolor = col&(this.hovercolor)
     ELSEIF active(elementindex) THEN
-        this.mousestate = "active"
+        this.drawcolor = col&("blue")
     ELSEIF this.selected THEN
-        this.mousestate = "selected"
+        this.drawcolor = col&("green")
     ELSE
-        this.mousestate = ""
+        this.drawcolor = col&(this.color)
     END IF
-
-    SELECT CASE this.mousestate
-        CASE "active"
-            this.drawcolor = col&("blue")
-        CASE "selected"
-            this.drawcolor = col&("blue")
-        CASE "hover"
-            this.drawcolor = col&(this.hovercolor)
-        CASE ""
-            this.drawcolor = col&(this.color)
-    END SELECT
+    IF mouse.left = 0 THEN elementlock = 0
 END SUB
 
 FUNCTION mouseinbounds (coord AS rectangle)
     IF mouse.x > coord.x AND mouse.x < coord.x + coord.w AND mouse.y > coord.y AND mouse.y < coord.y + coord.h THEN mouseinbounds = -1 ELSE mouseinbounds = 0
 END FUNCTION
+
+SUB uicall (func AS STRING, this AS element)
+    IF NOT lockuicall THEN
+        SELECT CASE func
+            CASE "select all"
+                this.sel_start = 1: this.sel_end = LEN(this.buffer)
+            CASE "paste"
+                IF longselection(this) THEN
+                    paste this.buffer, this.sel_start, this.sel_end
+                ELSE
+                    this.buffer = MID$(this.buffer, 1, this.cursor) + _CLIPBOARD$ + MID$(this.buffer, this.cursor + 1, LEN(this.buffer))
+                END IF
+            CASE "copy"
+                IF longselection(this) THEN
+                    copy this.buffer, this.sel_start, this.sel_end
+                ELSE
+                    _CLIPBOARD$ = this.buffer
+                END IF
+            CASE "search"
+                IF this.name = "commandline" THEN this.buffer = "nodetarget=": this.cursor = LEN(this.buffer)
+        END SELECT
+    END IF
+END SUB
 
 SUB elementkeyhandling (this AS element, elementindex AS INTEGER, bufferchar AS STRING, invoke AS invoke)
     IF (this.selected OR active(elementindex)) AND invoke.delete AND shiftdown THEN 'delete the entire buffer with shift+delete
@@ -477,29 +602,25 @@ SUB elementkeyhandling (this AS element, elementindex AS INTEGER, bufferchar AS 
         this.cursor = 0
         this.sel_start = 0: this.sel_end = 0
     END IF
+    IF this.cursor > LEN(this.buffer) THEN this.cursor = LEN(this.buffer)
+    IF this.sel_start > LEN(this.buffer) THEN this.sel_start = LEN(this.buffer)
+    IF this.sel_end > LEN(this.buffer) THEN this.sel_end = LEN(this.buffer)
 
     IF active(elementindex) = 0 THEN EXIT SUB
 
     'BELOW CODE WILL ONLY RUN IF ELEMENT IS ACTIVE!
+
     IF bufferchar <> "" THEN
         IF ctrldown THEN 'ctrl
             SELECT CASE LCASE$(bufferchar)
                 CASE "a"
-                    this.sel_start = 1: this.sel_end = LEN(this.buffer)
+                    uicall "select all", this
                 CASE "v" 'paste something into an input field
-                    IF longselection(this) THEN
-                        paste this.buffer, this.sel_start, this.sel_end
-                    ELSE
-                        this.buffer = MID$(this.buffer, 1, this.cursor) + _CLIPBOARD$ + MID$(this.buffer, this.cursor + 1, LEN(this.buffer))
-                    END IF
+                    uicall "paste", this
                 CASE "c" 'copy something from an input field
-                    IF longselection(this) THEN
-                        copy this.buffer, this.sel_start, this.sel_end
-                    ELSE
-                        _CLIPBOARD$ = this.buffer
-                    END IF
+                    uicall "copy", this
                 CASE "f" 'replace buffer with "nodetarget="
-                    IF this.name = "commandline" THEN this.buffer = "nodetarget=": this.cursor = LEN(this.buffer)
+                    uicall "search", this
                 CASE ELSE
                     insertbufferchar this, bufferchar
             END SELECT
@@ -552,7 +673,7 @@ SUB paste (basestring AS STRING, clipstart AS INTEGER, clipend AS INTEGER)
 END SUB
 
 SUB copy (basestring AS STRING, clipstart AS INTEGER, clipend AS INTEGER)
-    cliplength = ABS(clipstart - clipend)
+    cliplength = ABS(clipstart - clipend) + 1
     clipstart = min(clipstart, clipend)
     _CLIPBOARD$ = MID$(basestring, clipstart, cliplength)
 END SUB
@@ -608,8 +729,7 @@ SUB getnodelinkarray (array() AS STRING, target AS STRING)
             DO
                 INPUT #freen, nodeline$
                 IF MID$(nodeline$, 1, 5) = "link:" THEN
-                    REDIM _PRESERVE array(UBOUND(array) + 1) AS STRING
-                    array(UBOUND(array)) = MID$(nodeline$, 6, LEN(nodeline$))
+                    addtostringarray array(), MID$(nodeline$, 6, LEN(nodeline$))
                 END IF
             LOOP UNTIL EOF(freen) = -1
         END IF
@@ -972,12 +1092,12 @@ SUB loadui
                         elements(eub).buffer = getargument$(uielement$, "buffer")
                         elements(eub).round = getargument$(uielement$, "round")
                         elements(eub).hovertext = getargument$(uielement$, "hovertext")
+                        elements(eub).hovertextwait = getargumentv(uielement$, "hovertextwait")
                         elements(eub).padding = getargument$(uielement$, "padding")
                         elements(eub).selected = 0
 
                         IF elements(eub).type = "input" AND activeelement = 0 THEN
                             activeelement = eub
-                            elements(eub).selected = -1
                         END IF
 
                         IF elements(eub).name = "license" THEN
@@ -1001,7 +1121,7 @@ END SUB
 SUB resetallvalues
     'internal settings
     internal.setting.trimstrings = -1
-    internal.setting.fps = 20
+    internal.setting.fps = 60
 
     'data structure
     global.internalpath = "internal"
@@ -1088,17 +1208,6 @@ FUNCTION set (tocheck AS STRING) 'just returns if a string variable has a value 
         set = 0: EXIT FUNCTION
     END IF
 END FUNCTION
-
-SUB resetsum 'explicitly doesn't use REDIM because that bugs out
-    IF UBOUND(uisum) > 0 THEN
-        DO: u = u + 1
-            uisum(u).x = 0
-            uisum(u).y = 0
-            uisum(u).f = ""
-        LOOP UNTIL u = UBOUND(uisum)
-    END IF
-    REDIM _PRESERVE uisum(0) AS uisum
-END SUB
 
 FUNCTION stringvalue$ (basestring AS STRING, argument AS STRING)
     IF LEN(basestring) > 0 THEN
@@ -1313,6 +1422,8 @@ FUNCTION col& (colour AS STRING)
             col& = _RGBA(230, 230, 230, 255)
         CASE "bg2"
             col& = _RGBA(160, 160, 160, 255)
+        CASE "bg3"
+            col& = _RGBA(220, 220, 220, 255)
         CASE "green"
             col& = _RGBA(33, 166, 0, 255)
         CASE "red"
