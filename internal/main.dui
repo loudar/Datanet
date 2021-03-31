@@ -1,5 +1,5 @@
 type=title;x=margin;y=margin;w=flex;h=25;color=ui;hovercolor=ui;text=Console;name=title
-type=input;x=prev;y=prevb;w=flex;h=25;color=ui;hovercolor=ui2;text=Command:;angle=0;allownumbers=-1;allowtext=-1;allowspecial=-1;name=commandline
+type=input;x=prev;y=prevb;w=flex;h=25;color=ui;hovercolor=ui2;text=Command:;angle=0;allownumbers=-1;allowtext=-1;allowspecial=-1;name=commandline;hovertext=Type your commands here
 type=line;x=prev;y=prevb;w=full;h=0;color=ui;hovercolor=ui2;name=separator
 type=button;x=prev;y=prevb;w=flex;h=25;color=ui;hovercolor=ui2;style=b;text=New node;angle=0;name=Baddnode;action=add.node
 type=button;x=prevr;y=prev;w=flex;h=25;color=ui;hovercolor=ui2;style=b;text=Delete node;angle=0;name=Bremovenode;action=remove.node
