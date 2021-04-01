@@ -48,7 +48,7 @@ END TYPE
 'UI
 TYPE element
     AS _BYTE show, acceptinput, allownumbers, allowtext, allowspecial, selected, state, deselect
-    AS STRING x, y, w, h, style, name, text, buffer, type, color, hovercolor, action, angle, view, round, hovertext, padding, url
+    AS STRING x, y, w, h, style, name, text, buffer, type, color, hovercolor, action, angle, view, round, hovertext, padding, url, switchword, group
     AS INTEGER sel_start, sel_end, cursor, items, hovertextwait, hoverx, hovery
     AS _UNSIGNED _INTEGER64 scroll
     AS _FLOAT statelock, hovertime
@@ -58,11 +58,6 @@ TYPE element
     value AS _FLOAT
 END TYPE
 REDIM SHARED elements(0) AS element
-TYPE uisum
-    AS _FLOAT x, y
-    AS STRING f 'determines "focus"
-END TYPE
-REDIM SHARED uisum(0) AS uisum
 REDIM SHARED AS STRING viewname(0), currentview
 TYPE invoke
     AS _BYTE delete, back, select, right, left, deselect, jumptoend, jumptofront
@@ -371,14 +366,27 @@ SUB drawelement (this AS element, elementindex AS INTEGER, coord AS rectangle, i
             LINE (coord.x, coord.y)-(coord.x + coord.w - global.padding, coord.y), this.drawcolor
         CASE "box"
             rectangle "x=" + lst$(coord.x) + ";y=" + lst$(coord.y) + ";w=" + lst$(coord.w) + ";h=" + lst$(coord.h) + ";style=" + this.style + ";angle=" + this.angle + ";round=" + this.round, this.drawcolor
-        CASE "switch"
+        CASE "checkbox"
             boxsize = _FONTHEIGHT(font_normal) * 0.75
             boxoffset = 0
             coord.w = coord.w + boxsize + global.margin
             IF this.state = -1 THEN this.style = "bf" ELSE this.style = "b"
             rectangle "x=" + lst$(coord.x) + ";y=" + lst$(coord.y + boxoffset) + ";w=" + lst$(boxsize) + ";h=" + lst$(boxsize) + ";style=" + this.style + ";round=0", this.drawcolor
             COLOR this.drawcolor, col&("t")
-            _PRINTSTRING (coord.x + boxsize + global.margin, coord.y), this.text + " " + switchword$("on", this.state)
+            _PRINTSTRING (coord.x + boxsize + global.margin, coord.y), this.text + " " + switchword$(this.switchword, this.state)
+        CASE "radiobutton"
+            boxsize = _FONTHEIGHT(font_normal) * 0.75
+            boxoffset = 0
+            coord.w = coord.w + boxsize + global.margin
+            cx = coord.x + (boxsize / 2)
+            cy = coord.y + (boxsize / 2)
+            CIRCLE (cx, cy), boxsize * 0.5, this.drawcolor
+            IF this.state = -1 THEN
+                CIRCLE (cx, cy), boxsize * 0.3, this.drawcolor
+                PAINT (cx, cy), this.drawcolor, this.drawcolor
+            END IF
+            COLOR this.drawcolor, col&("t")
+            _PRINTSTRING (coord.x + boxsize + global.margin, coord.y), this.text + " " + switchword$(this.switchword, this.state)
         CASE "list"
             rectangle "x=" + lst$(coord.x) + ";y=" + lst$(coord.y) + ";w=" + lst$(coord.w) + ";h=" + lst$(coord.h) + ";style=" + this.style + ";angle=" + this.angle + ";round=" + this.round, this.drawcolor
             coord.x = coord.x + (2 * global.padding)
@@ -389,49 +397,56 @@ SUB drawelement (this AS element, elementindex AS INTEGER, coord AS rectangle, i
                     nodecount = getnodecount(searchnode$)
                     DIM AS STRING nodearray(0)
                     getnodearray nodearray(), searchnode$
-                    IF UBOUND(nodearray) > 0 THEN
-                        IF this.scroll > UBOUND(nodearray) THEN this.scroll = UBOUND(nodearray)
-                        IF this.scroll < 0 THEN this.scroll = 0
-                        n = this.scroll
-                        DO: n = n + 1
-                            listitemy = coord.y + ((global.margin + _FONTHEIGHT(font_normal)) * (n - 1))
-
-                            IF mouse.x > coord.x - (2 * global.padding) AND mouse.x < coord.x + coord.w - (2 * global.padding) AND mouse.y > listitemy AND mouse.y < listitemy + _FONTHEIGHT(font_normal) THEN
-                                COLOR col&("blue"), col&("t")
-                            ELSE
-                                COLOR this.drawcolor, col&("t")
-                            END IF
-
-                            IF listitemy + _FONTHEIGHT(font_normal) < coord.y + coord.h THEN
-                                'fetch node info based on array
-                                DIM AS STRING listitem(3)
-                                listitem(1) = nodearray(n)
-                                listitem(2) = getnodeinfo$("date", listitem(1)) + " @ " + getnodeinfo$("time", listitem(1))
-                                listitem(3) = getnodeinfo$("type", listitem(1))
-
-                                'display node info
-                                IF UBOUND(listitem) > 0 THEN
-                                    li = 0: DO: li = li + 1
-                                        listitemx = coord.x + ((coord.w / UBOUND(listitem)) * (li - 1))
-                                        _PRINTSTRING (listitemx, listitemy), listitem(li)
-                                    LOOP UNTIL li = UBOUND(listitem)
-                                END IF
-                                ERASE listitem 'clean up array, will otherwise produce errors when dimming again
-                            END IF
-                        LOOP UNTIL n = UBOUND(nodearray) OR (listitemy + _FONTHEIGHT(font_normal) >= coord.y - global.padding + coord.h)
-                        this.items = n - this.scroll
-                    END IF
+                    displaynodearray this, nodearray()
                 CASE "linklist"
             END SELECT
     END SELECT
 
-    'display selection/cursor
+    displayselection this, elementindex, coord
+END SUB
+
+SUB displaynodearray (this AS element, nodearray() AS STRING)
+    IF UBOUND(nodearray) = 0 THEN EXIT SUB
+
+    IF this.scroll > UBOUND(nodearray) THEN this.scroll = UBOUND(nodearray)
+    IF this.scroll < 0 THEN this.scroll = 0
+    n = this.scroll
+    DO: n = n + 1
+        listitemy = coord.y + ((global.margin + _FONTHEIGHT(font_normal)) * (n - 1))
+
+        IF mouse.x > coord.x - (2 * global.padding) AND mouse.x < coord.x + coord.w - (2 * global.padding) AND mouse.y > listitemy AND mouse.y < listitemy + _FONTHEIGHT(font_normal) THEN
+            COLOR col&("blue"), col&("t")
+        ELSE
+            COLOR this.drawcolor, col&("t")
+        END IF
+
+        IF listitemy + _FONTHEIGHT(font_normal) < coord.y + coord.h THEN
+            'fetch node info based on array
+            DIM AS STRING listitem(3)
+            listitem(1) = nodearray(n)
+            listitem(2) = getnodeinfo$("date", listitem(1)) + " @ " + getnodeinfo$("time", listitem(1))
+            listitem(3) = getnodeinfo$("type", listitem(1))
+
+            'display node info
+            IF UBOUND(listitem) > 0 THEN
+                li = 0: DO: li = li + 1
+                    listitemx = coord.x + ((coord.w / UBOUND(listitem)) * (li - 1))
+                    _PRINTSTRING (listitemx, listitemy), listitem(li)
+                LOOP UNTIL li = UBOUND(listitem)
+            END IF
+            ERASE listitem 'clean up array, will otherwise produce errors when dimming again
+        END IF
+    LOOP UNTIL n = UBOUND(nodearray) OR (listitemy + _FONTHEIGHT(font_normal) >= coord.y - global.padding + coord.h)
+    this.items = n - this.scroll
+END SUB
+
+SUB displayselection (this AS element, elementindex AS INTEGER, coord AS rectangle)
     IF textselectable(this) AND active(elementindex) THEN
         IF longselection(this) THEN
             COLOR this.drawcolor, col&("selected")
             minx = min(this.sel_start, this.sel_end)
             maxx = max(this.sel_start, this.sel_end)
-            _PRINTSTRING (coord.x + (_FONTWIDTH(font_normal) * (LEN(this.text) + min(this.sel_start, this.sel_end))), coord.y), MID$(this.buffer, min(this.sel_start, this.sel_end), max(this.sel_start, this.sel_end) - min(this.sel_start, this.sel_end) + 1)
+            _PRINTSTRING (coord.x + (_FONTWIDTH(font_normal) * (LEN(this.text) + minx)), coord.y), MID$(this.buffer, minx, maxx - minx + 1)
         ELSE
             IF (TIMER - mouse.lefttime) MOD 2 = 0 AND typable(this) THEN
                 cursoroffset = -1
@@ -526,9 +541,16 @@ SUB elementmousehandling (this AS element, elementindex AS INTEGER, invoke AS in
         ELSE
             IF mouse.left AND this.action <> "" THEN
                 dothis "action=" + this.action + ";" + getcurrentinputvalues$(-1)
-            ELSEIF mouse.left AND this.type = "switch" AND this.statelock = 0 THEN
+            ELSEIF mouse.left AND this.type = "checkbox" AND this.statelock = 0 THEN
                 IF this.state = 0 THEN this.state = -1 ELSE this.state = 0
                 this.statelock = -1
+            ELSEIF mouse.left AND this.type = "radiobutton" THEN
+                this.state = -1
+                e = 0: DO: e = e + 1
+                    IF elements(e).group = this.group AND elements(e).view = currentview AND elements(e).type = "radiobutton" AND e <> elementindex THEN
+                        elements(e).state = 0
+                    END IF
+                LOOP UNTIL e = UBOUND(elements)
             ELSEIF mouse.left AND this.action = "" AND NOT active(elementindex) AND textselectable(this) THEN
                 activeelement = elementindex
                 this.sel_start = 0: this.sel_end = 0
@@ -603,7 +625,7 @@ SUB elementkeyhandling (this AS element, elementindex AS INTEGER, bufferchar AS 
     IF (this.selected OR active(elementindex)) AND invoke.delete AND shiftdown THEN 'delete the entire buffer with shift+delete
         this.buffer = ""
         this.cursor = 0
-        this.sel_start = 0: this.sel_end = 0
+        resetselection this
     END IF
     IF this.cursor > LEN(this.buffer) THEN this.cursor = LEN(this.buffer)
     IF this.sel_start > LEN(this.buffer) THEN this.sel_start = LEN(this.buffer)
@@ -637,10 +659,21 @@ SUB elementkeyhandling (this AS element, elementindex AS INTEGER, bufferchar AS 
             insertbufferchar this, bufferchar
         END IF
     ELSE
-        IF ctrldown THEN
+        IF ctrldown AND shiftdown THEN
+            IF invoke.left THEN
+                IF NOT this.sel_start THEN this.sel_start = this.cursor
+                this.sel_end = _INSTRREV(MID$(this.buffer, 1, this.cursor - 1), " ")
+                this.cursor = this.sel_end
+            END IF
+            IF invoke.right THEN
+                IF NOT this.sel_start THEN this.sel_start = this.cursor
+                this.sel_end = INSTR(MID$(this.buffer, this.cursor + 1, LEN(this.buffer)), " ") + this.cursor
+                this.cursor = this.sel_end
+            END IF
+        ELSEIF ctrldown AND NOT shiftdown THEN
             IF invoke.left THEN this.cursor = _INSTRREV(MID$(this.buffer, 1, this.cursor - 1), " ")
             IF invoke.right THEN this.cursor = INSTR(MID$(this.buffer, this.cursor + 1, LEN(this.buffer)), " ") + this.cursor
-        ELSEIF shiftdown THEN
+        ELSEIF shiftdown AND NOT ctrldown THEN
             IF invoke.left THEN
                 IF this.sel_start THEN
                     IF this.sel_end > 0 THEN this.sel_end = this.sel_end - 1
@@ -779,6 +812,7 @@ SUB getnodelinkarray (array() AS STRING, target AS STRING)
 END SUB
 
 FUNCTION switchword$ (word AS STRING, state AS _BYTE)
+    IF word = "" THEN switchword$ = "": EXIT FUNCTION
     DIM AS STRING state1, state2
     SELECT CASE LCASE$(word)
         CASE "on"
@@ -947,7 +981,7 @@ SUB add.license (arguments AS STRING)
     DIM license AS STRING
     license = getargument$(arguments, "license")
     IF checkLicense(license) THEN
-        global.license = license
+        setlicense license, -1
         license = ""
         saveconfig
     END IF
@@ -1064,7 +1098,7 @@ SUB loadconfig
     global.round = getargumentv(config$, "round")
     global.stroke = getargumentv(config$, "stroke")
     global.license = getargument$(config$, "license")
-    IF checkLicense(global.license) = 0 THEN setlicense "", 0: saveconfig
+    IF checkLicense(_INFLATE$(global.license)) = 0 THEN setlicense "", 0: saveconfig
     IF global.license <> "" THEN global.licensestatus = -1
 END SUB
 
@@ -1117,38 +1151,42 @@ SUB loadui
                     DO
                         INPUT #freen, uielement$
 
-                        REDIM _PRESERVE elements(UBOUND(elements) + 1) AS element
-                        eub = UBOUND(elements)
-                        elements(eub).view = viewname(lview)
-                        elements(eub).type = getargument$(uielement$, "type")
-                        elements(eub).allownumbers = getargumentv(uielement$, "allownumbers")
-                        elements(eub).allowtext = getargumentv(uielement$, "allowtext")
-                        elements(eub).allowspecial = getargumentv(uielement$, "allowspecial")
-                        elements(eub).name = getargument$(uielement$, "name")
-                        elements(eub).x = getargument$(uielement$, "x")
-                        elements(eub).y = getargument$(uielement$, "y")
-                        elements(eub).w = getargument$(uielement$, "w")
-                        elements(eub).h = getargument$(uielement$, "h")
-                        elements(eub).color = getargument$(uielement$, "color")
-                        elements(eub).hovercolor = getargument$(uielement$, "hovercolor")
-                        elements(eub).style = getargument$(uielement$, "style")
-                        elements(eub).text = getargument$(uielement$, "text")
-                        elements(eub).action = getargument$(uielement$, "action")
-                        elements(eub).angle = getargument$(uielement$, "angle")
-                        elements(eub).buffer = getargument$(uielement$, "buffer")
-                        elements(eub).round = getargument$(uielement$, "round")
-                        elements(eub).hovertext = getargument$(uielement$, "hovertext")
-                        elements(eub).hovertextwait = getargumentv(uielement$, "hovertextwait")
-                        elements(eub).padding = getargument$(uielement$, "padding")
-                        elements(eub).url = getargument$(uielement$, "url")
-                        elements(eub).selected = 0
+                        IF MID$(_TRIM$(uielement$), 1, 1) <> "/" THEN
+                            REDIM _PRESERVE elements(UBOUND(elements) + 1) AS element
+                            eub = UBOUND(elements)
+                            elements(eub).view = viewname(lview)
+                            elements(eub).type = getargument$(uielement$, "type")
+                            elements(eub).allownumbers = getargumentv(uielement$, "allownumbers")
+                            elements(eub).allowtext = getargumentv(uielement$, "allowtext")
+                            elements(eub).allowspecial = getargumentv(uielement$, "allowspecial")
+                            elements(eub).name = getargument$(uielement$, "name")
+                            elements(eub).x = getargument$(uielement$, "x")
+                            elements(eub).y = getargument$(uielement$, "y")
+                            elements(eub).w = getargument$(uielement$, "w")
+                            elements(eub).h = getargument$(uielement$, "h")
+                            elements(eub).color = getargument$(uielement$, "color")
+                            elements(eub).hovercolor = getargument$(uielement$, "hovercolor")
+                            elements(eub).style = getargument$(uielement$, "style")
+                            elements(eub).text = getargument$(uielement$, "text")
+                            elements(eub).action = getargument$(uielement$, "action")
+                            elements(eub).angle = getargument$(uielement$, "angle")
+                            elements(eub).buffer = getargument$(uielement$, "buffer")
+                            elements(eub).round = getargument$(uielement$, "round")
+                            elements(eub).hovertext = getargument$(uielement$, "hovertext")
+                            elements(eub).hovertextwait = getargumentv(uielement$, "hovertextwait")
+                            elements(eub).padding = getargument$(uielement$, "padding")
+                            elements(eub).url = getargument$(uielement$, "url")
+                            elements(eub).switchword = getargument$(uielement$, "switchword")
+                            elements(eub).group = getargument$(uielement$, "group")
+                            elements(eub).selected = 0
 
-                        IF elements(eub).type = "input" AND activeelement = 0 THEN
-                            activeelement = eub
-                        END IF
+                            IF elements(eub).type = "input" AND activeelement = 0 THEN
+                                activeelement = eub
+                            END IF
 
-                        IF elements(eub).name = "license" THEN
-                            elements(eub).buffer = global.license
+                            IF elements(eub).name = "license" THEN
+                                elements(eub).buffer = global.license
+                            END IF
                         END IF
                     LOOP UNTIL EOF(freen)
                 END IF
@@ -1456,7 +1494,7 @@ SUB openbrowser (url AS STRING)
 END SUB
 
 SUB setlicense (license AS STRING, status AS _BYTE)
-    global.license = license
+    global.license = _DEFLATE$(license)
     global.licensestatus = status
 END SUB
 
