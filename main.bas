@@ -640,9 +640,40 @@ SUB elementkeyhandling (this AS element, elementindex AS INTEGER, bufferchar AS 
         IF ctrldown THEN
             IF invoke.left THEN this.cursor = _INSTRREV(MID$(this.buffer, 1, this.cursor - 1), " ")
             IF invoke.right THEN this.cursor = INSTR(MID$(this.buffer, this.cursor + 1, LEN(this.buffer)), " ") + this.cursor
+        ELSEIF shiftdown THEN
+            IF invoke.left THEN
+                IF this.sel_start THEN
+                    IF this.sel_end > 0 THEN this.sel_end = this.sel_end - 1
+                    this.cursor = this.sel_end
+                ELSE
+                    this.sel_start = this.cursor
+                    this.sel_end = this.sel_start
+                END IF
+            END IF
+            IF invoke.right THEN
+                IF this.sel_start THEN
+                    IF this.sel_end < LEN(this.buffer) THEN this.sel_end = this.sel_end + 1
+                    this.cursor = this.sel_end
+                ELSE
+                    this.sel_start = this.cursor
+                    this.sel_end = this.sel_start
+                END IF
+            END IF
         ELSE
-            IF invoke.left THEN IF this.cursor > 0 THEN this.cursor = this.cursor - 1
-            IF invoke.right THEN IF this.cursor < LEN(this.buffer) THEN this.cursor = this.cursor + 1
+            IF invoke.left THEN
+                IF longselection(this) THEN
+                    resetselection this
+                ELSE
+                    IF this.cursor > 0 THEN this.cursor = this.cursor - 1
+                END IF
+            END IF
+            IF invoke.right THEN
+                IF longselection(this) THEN
+                    resetselection this
+                ELSE
+                    IF this.cursor < LEN(this.buffer) THEN this.cursor = this.cursor + 1
+                END IF
+            END IF
         END IF
         IF invoke.jumptoend THEN this.cursor = LEN(this.buffer)
         IF invoke.jumptofront THEN this.cursor = 0
@@ -773,7 +804,7 @@ FUNCTION getcurrentinputvalues$ (killbuffer AS _BYTE)
                 IF killbuffer THEN elements(e).buffer = ""
                 IF elements(e).url <> "" THEN buffer = buffer + "url=" + elements(e).url + ";"
             ELSEIF elements(e).view = currentview AND elements(e).name = "commandline" THEN
-                buffer = buffer + elements(e).buffer
+                buffer = buffer + elements(e).buffer + ";"
                 IF killbuffer THEN elements(e).buffer = ""
             END IF
             IF elements(e).type = "input" AND killbuffer THEN
@@ -916,7 +947,7 @@ SUB add.license (arguments AS STRING)
     DIM license AS STRING
     license = getargument$(arguments, "license")
     IF checkLicense(license) THEN
-        global.license = _DEFLATE$(license)
+        global.license = license
         license = ""
         saveconfig
     END IF
@@ -1033,7 +1064,7 @@ SUB loadconfig
     global.round = getargumentv(config$, "round")
     global.stroke = getargumentv(config$, "stroke")
     global.license = getargument$(config$, "license")
-    IF checkLicense(_INFLATE$(global.license)) = 0 THEN setlicense "", 0: saveconfig
+    IF checkLicense(global.license) = 0 THEN setlicense "", 0: saveconfig
     IF global.license <> "" THEN global.licensestatus = -1
 END SUB
 
@@ -1345,8 +1376,9 @@ FUNCTION lst$ (number AS _FLOAT)
 END FUNCTION
 
 FUNCTION checkLicense (license$)
+    IF _FILEEXISTS("license.txt") THEN KILL "license.txt"
     shellcmd$ = "cmd /c curl http://api.gumroad.com/v2/licenses/verify -d " + CHR$(34) + "product_permalink=XXun" + CHR$(34) + " -d " + CHR$(34) + "license_key=" + license$ + CHR$(34) + " > license.txt"
-    SHELL shellcmd$
+    SHELL _HIDE shellcmd$
     DO: LOOP UNTIL _FILEEXISTS("license.txt") = -1
     OPEN "license.txt" FOR INPUT AS #1
     IF EOF(1) = 0 THEN
@@ -1412,7 +1444,7 @@ FUNCTION checkLicense (license$)
     END IF
     CLOSE #1
     KILL "license.txt"
-    IF success$ = "true" AND productname$ = "Datanet" AND permalink$ = "XXun" AND licensekey$ = license$ AND endedat$ = "" AND failedat$ = "" THEN
+    IF success$ = "true" AND productname$ = "Datanet" AND permalink$ = "datanet" AND licensekey$ = license$ AND endedat$ = "" AND failedat$ = "" THEN
         checkLicense = -1
     ELSE
         checkLicense = 0
