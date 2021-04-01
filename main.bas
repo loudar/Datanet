@@ -26,7 +26,7 @@ TYPE global
     AS STRING nodepath, internalpath, license
     AS _UNSIGNED _INTEGER64 maxnodeid
     AS _FLOAT margin, padding, round, stroke
-    AS _BYTE licensestatus
+    AS _BYTE licensestatus, exactsearch
 END TYPE
 REDIM SHARED global AS global
 
@@ -34,7 +34,7 @@ TYPE mouse
     AS _FLOAT x, y
     AS _BYTE left, right, leftrelease, rightrelease
     AS INTEGER scroll
-    AS _FLOAT lefttime, righttime, lefttimedif, righttimedif
+    AS _FLOAT lefttime, righttime, lefttimedif, righttimedif, lefttimedif2
 END TYPE
 REDIM SHARED mouse AS mouse
 
@@ -131,6 +131,7 @@ SUB checkmouse
         IF mouse.left THEN
             IF mouse.leftrelease THEN
                 mouse.leftrelease = 0
+                mouse.lefttimedif2 = mouse.lefttimedif
                 mouse.lefttimedif = TIMER - mouse.lefttime: mouse.lefttime = TIMER
             END IF
         ELSE
@@ -220,7 +221,7 @@ SUB displaycontext (this AS element, elementindex AS INTEGER)
     maxlen = getmaxstringlen(contextdata())
     contextpadding = 6
     contextwidth = (maxlen * _FONTWIDTH(font_normal)) + (2 * contextpadding)
-    contextheight = (UBOUND(contextdata) * _FONTHEIGHT(font_normal)) + (2 * contextpadding)
+    contextheight = (UBOUND(contextdata) * (contextpadding + _FONTHEIGHT(font_normal))) + contextpadding
 
     DIM contextcoord AS rectangle
     contextcoord.x = this.contextx - 1
@@ -240,7 +241,7 @@ SUB displaycontext (this AS element, elementindex AS INTEGER)
             entrycoord.w = contextcoord.w
             entrycoord.h = _FONTHEIGHT(font_normal) + contextpadding
 
-            IF mouseinbounds(entrycoord) THEN
+            IF mouseinbounds(entrycoord) AND contextdata(contextentry) <> "" THEN
                 IF mouse.left THEN uicall LCASE$(contextdata(contextentry)), this, elmentindex: lockuicall = -1 ELSE lockuicall = 0
                 COLOR col&("blue"), col&("t")
                 LINE (entrycoord.x + 1, entrycoord.y + 1)-(entrycoord.x + entrycoord.w - 1, entrycoord.y + entrycoord.h - 1), col&("bg3"), BF
@@ -257,6 +258,8 @@ SUB getcontextarray (array() AS STRING, this AS element)
     IF textselectable(this) THEN addtostringarray array(), "Copy"
     IF typable(this) THEN addtostringarray array(), "Paste"
     IF this.action <> "" THEN addtostringarray array(), "Activate"
+    IF typable(this) THEN addtostringarray array(), "UPPERCASE"
+    IF typable(this) THEN addtostringarray array(), "lowercase"
 END SUB
 
 SUB addtostringarray (array() AS STRING, toadd AS STRING)
@@ -422,7 +425,6 @@ SUB drawelement (this AS element, elementindex AS INTEGER, coord AS rectangle, i
             COLOR this.drawcolor, col&("t")
             _PRINTSTRING (coord.x + boxsize + global.margin, coord.y), this.text + " " + switchword$(this.switchword, this.state)
         CASE "list"
-            rectangle "x=" + lst$(coord.x) + ";y=" + lst$(coord.y) + ";w=" + lst$(coord.w) + ";h=" + lst$(coord.h) + ";style=" + this.style + ";angle=" + this.angle + ";round=" + this.round, this.drawcolor
             coord.x = coord.x + (2 * global.padding)
             coord.y = coord.y + global.padding
             SELECT CASE this.name
@@ -431,47 +433,90 @@ SUB drawelement (this AS element, elementindex AS INTEGER, coord AS rectangle, i
                     nodecount = getnodecount(searchnode$)
                     DIM AS STRING nodearray(0)
                     getnodearray nodearray(), searchnode$
-                    displaynodearray this, nodearray()
+                    displaylistarray this, nodearray(), coord
                 CASE "linklist"
+                    searchnode$ = elements(gettitleid).text
+                    DIM AS STRING linkarray(0)
+                    getlinkarray linkarray(), searchnode$
+                    displaylistarray this, nodearray(), coord
             END SELECT
+            rectangle "x=" + lst$(coord.x - (2 * global.padding)) + ";y=" + lst$(coord.y - global.padding) + ";w=" + lst$(coord.w) + ";h=" + lst$(coord.h) + ";style=" + this.style + ";angle=" + this.angle + ";round=" + this.round, this.drawcolor
     END SELECT
-
     displayselection this, elementindex, coord
 END SUB
 
-SUB displaynodearray (this AS element, nodearray() AS STRING)
-    IF UBOUND(nodearray) = 0 THEN EXIT SUB
+SUB getlinkarray (array() AS STRING, nodetarget AS STRING)
+    file$ = path$(nodetarget)
+    freen = FREEFILE
+    OPEN file$ FOR INPUT AS #freen
+    IF EOF(freen) = 0 THEN
+        DO
+            INPUT #freen, nodeline$
+            IF MID$(nodeline$, 1, 5) = "link:" THEN
+                nodeline$ = MID$(nodeline$, 6, LEN(nodeline$))
+                addtostringarray array(), nodeline$
+            END IF
+        LOOP UNTIL EOF(freen)
+    END IF
+    CLOSE #freen
+END SUB
 
-    IF this.scroll > UBOUND(nodearray) THEN this.scroll = UBOUND(nodearray)
+SUB displaylistarray (this AS element, array() AS STRING, coord AS rectangle)
+    IF UBOUND(array) = 0 THEN EXIT SUB
+
+    IF this.scroll > UBOUND(array) THEN this.scroll = UBOUND(array)
     IF this.scroll < 0 THEN this.scroll = 0
+
     n = this.scroll
     DO: n = n + 1
         listitemy = coord.y + ((global.margin + _FONTHEIGHT(font_normal)) * (n - 1))
 
         IF mouse.x > coord.x - (2 * global.padding) AND mouse.x < coord.x + coord.w - (2 * global.padding) AND mouse.y > listitemy AND mouse.y < listitemy + _FONTHEIGHT(font_normal) THEN
+            IF mouse.left THEN clicklistitem this, array()
             COLOR col&("blue"), col&("t")
         ELSE
             COLOR this.drawcolor, col&("t")
         END IF
 
-        IF listitemy + _FONTHEIGHT(font_normal) < coord.y + coord.h THEN
-            'fetch node info based on array
-            DIM AS STRING listitem(3)
-            listitem(1) = nodearray(n)
-            listitem(2) = getnodeinfo$("date", listitem(1)) + " @ " + getnodeinfo$("time", listitem(1))
-            listitem(3) = getnodeinfo$("type", listitem(1))
+        DIM AS STRING listitems(0)
+        getlistitems listitems(), array(), n, this
 
-            'display node info
-            IF UBOUND(listitem) > 0 THEN
+        IF listitemy + _FONTHEIGHT(font_normal) < coord.y + coord.h THEN
+            'display info
+            IF UBOUND(listitems) > 0 THEN
                 li = 0: DO: li = li + 1
-                    listitemx = coord.x + ((coord.w / UBOUND(listitem)) * (li - 1))
-                    _PRINTSTRING (listitemx, listitemy), listitem(li)
-                LOOP UNTIL li = UBOUND(listitem)
+                    listitemx = coord.x + ((coord.w / UBOUND(listitems)) * (li - 1))
+                    _PRINTSTRING (listitemx, listitemy), listitems(li)
+                LOOP UNTIL li = UBOUND(listitems)
             END IF
-            ERASE listitem 'clean up array, will otherwise produce errors when dimming again
+            ERASE listitems 'clean up array, will otherwise produce errors when dimming again
         END IF
-    LOOP UNTIL n = UBOUND(nodearray) OR (listitemy + _FONTHEIGHT(font_normal) >= coord.y - global.padding + coord.h)
+    LOOP UNTIL n = UBOUND(array) OR (listitemy + _FONTHEIGHT(font_normal) >= coord.y - global.padding + coord.h)
     this.items = n - this.scroll
+END SUB
+
+SUB clicklistitem (this AS element, array() AS STRING)
+    SELECT CASE this.name
+        CASE "nodelist"
+            dothis "action=view.node;nodetarget=" + array(n)
+        CASE "linklist"
+            'TODO
+    END SELECT
+END SUB
+
+SUB getlistitems (array() AS STRING, sourcearray() AS STRING, index AS INTEGER, this AS element)
+    SELECT CASE this.name
+        CASE "nodelist"
+            REDIM AS STRING array(3)
+            array(1) = sourcearray(index)
+            array(2) = getnodeinfo$("date", array(1)) + " @ " + getnodeinfo$("time", array(1))
+            array(3) = getnodeinfo$("type", array(1))
+        CASE "linklist"
+            REDIM AS STRING array(3)
+            array(1) = getargument$(sourcearray(index), "nodeorigin")
+            array(2) = getargument$(sourcearray(index), "linkname")
+            array(3) = getargument$(sourcearray(index), "nodetarget")
+    END SELECT
 END SUB
 
 SUB displayselection (this AS element, elementindex AS INTEGER, coord AS rectangle)
@@ -616,11 +661,13 @@ SUB elementmousehandling (this AS element, elementindex AS INTEGER, invoke AS in
                     END IF
 
                     elementlock = elementindex 'locks all actions to only the current element
-                ELSE
+                ELSEIF doubleclick THEN
                     this.cursor = mousehoverchar
                     this.sel_start = _INSTRREV(MID$(this.buffer, 1, this.cursor - 1), " ") + 1
                     this.sel_end = INSTR(MID$(this.buffer, this.sel_start + 1, LEN(this.buffer)), " ") + this.sel_start - 1
                     IF this.sel_end = this.sel_start - 1 THEN this.sel_end = LEN(this.buffer)
+                ELSE 'triple click
+                    uicall "select all", this, elementindex
                 END IF
             END IF
         END IF
@@ -634,6 +681,10 @@ SUB elementmousehandling (this AS element, elementindex AS INTEGER, invoke AS in
     END IF
     IF mouse.left = 0 THEN elementlock = 0: this.statelock = 0
 END SUB
+
+FUNCTION doubleclick
+    IF mouse.lefttimedif <= internal.setting.doubleclickspeed AND mouse.lefttimedif2 > internal.setting.doubleclickspeed THEN doubleclick = -1 ELSE doubleclick = 0
+END FUNCTION
 
 FUNCTION mouseinbounds (coord AS rectangle)
     IF mouse.x > coord.x AND mouse.x < coord.x + coord.w AND mouse.y > coord.y AND mouse.y < coord.y + coord.h THEN mouseinbounds = -1 ELSE mouseinbounds = 0
@@ -658,10 +709,27 @@ SUB uicall (func AS STRING, this AS element, elementindex AS INTEGER)
                     _CLIPBOARD$ = this.buffer
                 END IF
             CASE "search"
-                addtohistory this, elementindex
-                IF this.name = "commandline" THEN this.buffer = "nodetarget=": this.cursor = LEN(this.buffer)
+                IF this.name = "commandline" THEN addtohistory this, elementindex: this.buffer = "nodetarget=": this.cursor = LEN(this.buffer)
             CASE "revert"
                 IF elementindex = history(UBOUND(history)).element THEN gobackintime this
+            CASE "uppercase"
+                IF longselection(this) THEN
+                    minc = min(this.sel_start, this.sel_end)
+                    maxc = max(this.sel_start, this.sel_end)
+                    this.buffer = MID$(this.buffer, 1, minc - 1) + UCASE$(MID$(this.buffer, minc, maxc - minc + 1)) + MID$(this.buffer, maxc + 1, LEN(this.buffer))
+                ELSE
+                    this.buffer = UCASE$(this.buffer)
+                END IF
+            CASE "lowercase"
+                IF longselection(this) THEN
+                    minc = min(this.sel_start, this.sel_end)
+                    maxc = max(this.sel_start, this.sel_end)
+                    this.buffer = MID$(this.buffer, 1, minc - 1) + LCASE$(MID$(this.buffer, minc, maxc - minc + 1)) + MID$(this.buffer, maxc + 1, LEN(this.buffer))
+                ELSE
+                    this.buffer = LCASE$(this.buffer)
+                END IF
+            CASE "add node"
+                IF this.name = "commandline" THEN addtohistory this, elementindex: this.buffer = "action=add.node;nodetarget=": this.cursor = LEN(this.buffer)
         END SELECT
     END IF
 END SUB
@@ -689,10 +757,16 @@ SUB elementkeyhandling (this AS element, elementindex AS INTEGER, bufferchar AS 
                     uicall "paste", this, elementindex
                 CASE "c" 'copy something from an input field
                     uicall "copy", this, elementindex
-                CASE "f" 'replace buffer with "nodetarget="
-                    uicall "search", this, elementindex
+                CASE "u" 'uppercase
+                    uicall "uppercase", this, elementindex
+                CASE "l" 'lowercase
+                    uicall "lowercase", this, elementindex
                 CASE "z" 'revert last change
                     uicall "revert", this, elementindex
+                CASE "f" 'replace buffer with "nodetarget="
+                    uicall "search", this, elementindex
+                CASE "n" 'replace buffer with "action=add.node;nodetarget="
+                    uicall "add node", this, elementindex
                 CASE ELSE
                     insertbufferchar this, elementindex, bufferchar
             END SELECT
@@ -1029,8 +1103,16 @@ SUB dothis (arguments AS STRING)
     SELECT CASE MID$(action$, 1, INSTR(action$, ".") - 1)
         CASE "view"
             currentview = MID$(action$, INSTR(action$, ".") + 1, LEN(action$))
+            IF currentview = "node" OR currentview = "nodegraph" THEN elements(gettitleid).text = nodetarget
     END SELECT
 END SUB
+
+FUNCTION gettitleid
+    IF UBOUND(elements) = 0 THEN EXIT FUNCTION
+    DO: e = e + 1
+        IF elements(e).view = currentview AND elements(e).type = "title" THEN gettitleid = e: EXIT FUNCTION
+    LOOP UNTIL e = UBOUND(elements)
+END FUNCTION
 
 SUB add.license (arguments AS STRING)
     DIM license AS STRING
@@ -1153,6 +1235,7 @@ SUB loadconfig
     global.round = getargumentv(config$, "round")
     global.stroke = getargumentv(config$, "stroke")
     global.license = getargument$(config$, "license")
+    global.exactsearch = getargumentv(config$, "exactsearch")
     IF checkLicense(_INFLATE$(global.license)) = 0 THEN setlicense "", 0: saveconfig
     IF global.license <> "" THEN global.licensestatus = -1
 END SUB
@@ -1563,7 +1646,7 @@ FUNCTION col& (colour AS STRING)
         CASE "ui2"
             col& = _RGBA(150, 150, 150, 255)
         CASE "selected"
-            col& = _RGBA(200, 200, 220, 255)
+            col& = col&("bg3") '_RGBA(200, 200, 220, 255)
         CASE "bg1"
             col& = _RGBA(230, 230, 230, 255)
         CASE "bg2"

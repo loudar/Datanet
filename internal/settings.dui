@@ -3,8 +3,7 @@ type=text;x=prev;y=prevb;w=flex;h=25;color=ui;hovercolor=ui2;text=License status
 type=text;x=prevr;y=prev;w=flex;h=25;color=green;hovercolor=ui2;text=Get license;name=getlicense;action=web;url=https://gum.co/datanet
 /type=radiobutton;x=margin;y=prevb;w=flex;h=25;color=ui;hovercolor=ui2;text=Radio button 1;name=radio1;group=1
 /type=radiobutton;x=prev;y=prevb;w=flex;h=25;color=ui;hovercolor=ui2;text=Radio button 2;name=radio2;group=1
-/type=checkbox;x=prev;y=prevb;w=flex;h=25;color=ui;hovercolor=ui2;text=Test switch;name=testswitch
+type=checkbox;x=prev;y=prevb;w=flex;h=25;color=ui;hovercolor=ui2;text=Exact search;name=exactsearch
 type=time;x=margin;y=b;w=flex;h=25;color=ui;hovercolor=ui;name=clock;style=bf;angle=0
 type=button;x=right;y=bottom;w=flex;h=25;color=ui;hovercolor=ui2;name=quit;style=b;angle=0;text=Quit;action=quit
-type=button;x=prevl;y=bottom;w=flex;h=25;color=ui;hovercolor=ui2;name=settings;style=b;angle=0;text=Settings;action=view.settings
 type=button;x=prevl;y=bottom;w=flex;h=25;color=ui;hovercolor=ui2;name=back;style=b;angle=0;text=Back;action=view.main
