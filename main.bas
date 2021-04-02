@@ -26,7 +26,7 @@ TYPE global
     AS STRING nodepath, internalpath, license, scheme
     AS _UNSIGNED _INTEGER64 maxnodeid
     AS _FLOAT margin, padding, round, stroke
-    AS _BYTE licensestatus, exactsearch
+    AS _BYTE licensestatus, exactsearch, actionlock
 END TYPE
 REDIM SHARED global AS global
 
@@ -141,6 +141,7 @@ SUB checkmouse
             END IF
         ELSE
             mouse.leftrelease = -1
+            global.actionlock = 0
         END IF
         mouse.right = _MOUSEBUTTON(2)
         IF mouse.right THEN
@@ -220,13 +221,39 @@ SUB expandelement (this AS element, elementindex AS INTEGER)
     originalheight = coord.h
     optionspadding = 6
     lineheight = _FONTHEIGHT(font_normal) + optionspadding
-    coord.h = originalheight + (lineheight * (UBOUND(options)))
-    rectangle "x=" + lst$(coord.x) + ";y=" + lst$(coord.y) + ";w=" + lst$(coord.w) + ";h=" + lst$(coord.h) + ";style=" + this.style + ";angle=" + this.angle + ";round=" + this.round, this.drawcolor
-    coord.x = coord.x + (2 * global.padding)
-    coord.y = coord.y + global.padding + optionspadding
+    coord.h = originalheight + (lineheight * (UBOUND(options))) + optionspadding
+    rectangle "x=" + lst$(coord.x) + ";y=" + lst$(coord.y) + ";w=" + lst$(coord.w) + ";h=" + lst$(originalheight) + ";style=" + this.style + ";angle=" + this.angle + ";round=" + this.round, this.drawcolor
     DO: index = index + 1
-        _PRINTSTRING (coord.x, coord.y + (lineheight * index)), options(index)
+        DIM itemcoord AS rectangle
+        itemcoord.x = coord.x
+        itemcoord.y = coord.y + (lineheight * index) + optionspadding
+        itemcoord.w = coord.w
+        itemcoord.h = lineheight
+        IF mouseinbounds(itemcoord) THEN
+            IF mouse.left THEN this.buffer = options(index): setglobal this.name, this.buffer
+            COLOR col&("active"), col&("t")
+            LINE (itemcoord.x + 2, itemcoord.y + 2)-(itemcoord.x + itemcoord.w - 2, itemcoord.y + itemcoord.h - 2), col&("bg2"), BF
+        ELSE
+            COLOR col&("ui"), col&("t")
+            LINE (itemcoord.x + 2, itemcoord.y + 2)-(itemcoord.x + itemcoord.w - 2, itemcoord.y + itemcoord.h - 2), col&("bg1"), BF
+        END IF
+        _PRINTSTRING (itemcoord.x + (2 * global.padding), itemcoord.y + global.padding), options(index)
     LOOP UNTIL index = UBOUND(options)
+    rectangle "x=" + lst$(coord.x) + ";y=" + lst$(coord.y) + ";w=" + lst$(coord.w) + ";h=" + lst$(coord.h) + ";style=B;angle=" + this.angle + ";round=" + this.round, this.drawcolor
+END SUB
+
+SUB setglobal (globalname AS STRING, value AS STRING)
+    SELECT CASE globalname
+        CASE "colorscheme"
+            global.scheme = value
+        CASE "exactsearch"
+            global.exactsearch = VAL(value)
+        CASE "license"
+            global.license = value
+        CASE ELSE: EXIT SUB
+    END SELECT
+    saveconfig
+    loadconfig
 END SUB
 
 SUB getoptionsarray (array() AS STRING, this AS element)
@@ -470,7 +497,7 @@ SUB drawelement (this AS element, elementindex AS INTEGER, coord AS rectangle, i
             COLOR this.drawcolor, col&("t")
             _PRINTSTRING (coord.x + boxsize + global.margin, coord.y), this.text + " " + switchword$(this.switchword, this.state)
         CASE "dropdown"
-            rectangle "x=" + lst$(coord.x) + ";y=" + lst$(coord.y) + ";w=" + lst$(coord.w) + ";h=" + lst$(coord.h) + ";style=" + this.style + ";angle=" + this.angle + ";round=" + this.round, this.drawcolor
+            IF NOT this.expand THEN rectangle "x=" + lst$(coord.x) + ";y=" + lst$(coord.y) + ";w=" + lst$(coord.w) + ";h=" + lst$(coord.h) + ";style=" + this.style + ";angle=0;round=" + this.round, this.drawcolor
             coord.x = coord.x + (2 * global.padding)
             coord.y = coord.y + global.padding
             IF LCASE$(this.style) = "bf" THEN
@@ -677,6 +704,7 @@ SUB elementmousehandling (this AS element, elementindex AS INTEGER, invoke AS in
                 dothis "action=" + this.action + ";" + getcurrentinputvalues$(-1)
             ELSEIF mouse.left AND this.type = "checkbox" AND this.statelock = 0 THEN
                 IF this.state = 0 THEN this.state = -1 ELSE this.state = 0
+                setglobal this.name, lst$(this.state)
                 this.statelock = -1
             ELSEIF mouse.left AND this.type = "radiobutton" THEN
                 this.state = -1
@@ -1102,6 +1130,11 @@ FUNCTION getepadding$ (e AS INTEGER)
 END FUNCTION
 
 SUB dothis (arguments AS STRING)
+    IF global.actionlock THEN
+        EXIT SUB
+    ELSE
+        IF mouse.left THEN global.actionlock = -1
+    END IF
     DIM AS STRING nodeorigin, nodetype, nodetarget, linkname, license, url
     nodeorigin = getargument$(arguments, "nodeorigin")
     nodetype = getargument$(arguments, "nodetype")
@@ -1381,12 +1414,10 @@ SUB loadui
                             elements(eub).options = getargument$(uielement$, "options")
                             elements(eub).selected = 0
 
+                            checkglobal elements(eub)
+
                             IF elements(eub).type = "input" AND activeelement = 0 THEN
                                 activeelement = eub
-                            END IF
-
-                            IF elements(eub).name = "license" THEN
-                                elements(eub).buffer = global.license
                             END IF
                         END IF
                     LOOP UNTIL EOF(freen)
@@ -1402,6 +1433,17 @@ SUB loadui
         PRINT "Could not load UI!"
         SLEEP: SYSTEM
     END IF
+END SUB
+
+SUB checkglobal (this AS element)
+    SELECT CASE this.name
+        CASE "schemecolor"
+            this.buffer = global.scheme
+        CASE "exactsearch"
+            this.state = global.exactsearch
+        CASE "license"
+            this.buffer = global.license
+    END SELECT
 END SUB
 
 SUB resetallvalues
@@ -1565,53 +1607,114 @@ SUB rectangle (arguments AS STRING, clr AS LONG)
 END SUB
 
 SUB rectangleoutline (x, y, w, h, round, rotation, clr AS LONG, bfadjust)
-    IF w < h THEN mininmum = w ELSE mininmum = h
-    IF round > mininmum / 2 THEN round = mininmum / 2
-    distance = SQR((w ^ 2) + (h ^ 2)) / 2 'distance to center point
-    rotation = rotation - (_PI / 2)
-    rounddistance = distance - SQR(round ^ 2 + round ^ 2)
-    cx = x + (w / 2)
-    cy = y + (h / 2)
-    detail = _PI * round 'how many pixels are calculated for one rounded corner
-    angle1 = ATN((h / 2) / (w / 2))
-    angle2 = ((_PI) - (2 * angle1)) / 2
-    rotation = rotation - angle1
-    DO
-        corner = corner + 1
-        IF corner MOD 2 = 0 THEN 'alternates between the two different possible angles within a rectangle
-            cangle = angle2 * 2
-            offset = -_PI / 4
-        ELSE
-            cangle = angle1 * 2
-            offset = _PI / 4
-        END IF
+    IF rotation <> 0 THEN
+        IF w < h THEN mininmum = w ELSE mininmum = h
+        IF round > mininmum / 2 THEN round = mininmum / 2
+        distance = SQR((w ^ 2) + (h ^ 2)) / 2 'distance to center point
+        rotation = rotation - (_PI / 2)
+        rounddistance = distance - SQR(round ^ 2 + round ^ 2)
+        cx = x + (w / 2)
+        cy = y + (h / 2)
+        detail = _PI * round 'how many pixels are calculated for one rounded corner
+        angle1 = ATN((h / 2) / (w / 2))
+        angle2 = ((_PI) - (2 * angle1)) / 2
+        rotation = rotation - angle1
+        DO
+            corner = corner + 1
+            IF corner MOD 2 = 0 THEN 'alternates between the two different possible angles within a rectangle
+                cangle = angle2 * 2
+                offset = -_PI / 4
+            ELSE
+                cangle = angle1 * 2
+                offset = _PI / 4
+            END IF
 
-        'rcf = round corner factor, adds the angle progressively together to go "around" the rectangle based off the middle
-        rcf = rotation + anglebase
-        rcfp1 = rotation + anglebase + cangle
+            'rcf = round corner factor, adds the angle progressively together to go "around" the rectangle based off the middle
+            rcf = rotation + anglebase
+            rcfp1 = rotation + anglebase + cangle
 
-        px = cx + (rounddistance * SIN(rcf))
-        py = cy - (rounddistance * COS(rcf))
+            px = cx + (rounddistance * SIN(rcf))
+            py = cy - (rounddistance * COS(rcf))
 
-        px1 = cx + (rounddistance * SIN(rcfp1))
-        py1 = cy - (rounddistance * COS(rcfp1))
+            px1 = cx + (rounddistance * SIN(rcfp1))
+            py1 = cy - (rounddistance * COS(rcfp1))
 
-        'start is left end of rounding, end is right end of rounding
-        startangle = -(_PI / 2) + ((cangle / 2))
-        endangle = ((cangle / 2))
+            'start is left end of rounding, end is right end of rounding
+            startangle = -(_PI / 2) + ((cangle / 2))
+            endangle = ((cangle / 2))
 
-        'uses endangle of current corner to connect to startangle of next
-        LINE (px + (SIN(endangle + rcf) * round), py - (COS(endangle + rcf) * round))-(px1 + (SIN(startangle + rcfp1 + offset) * round), py1 - (COS(startangle + rcfp1 + offset) * round)), clr
+            'uses endangle of current corner to connect to startangle of next
+            LINE (px + (SIN(endangle + rcf) * round), py - (COS(endangle + rcf) * round))-(px1 + (SIN(startangle + rcfp1 + offset) * round), py1 - (COS(startangle + rcfp1 + offset) * round)), clr
 
-        'draws the curves on the corners pixel by pixel
-        angle = startangle + rcf - bfadjust
-        DO: angle = angle + ((0.5 * _PI) / detail)
-            PSET (px + (SIN(angle) * round), py - (COS(angle) * round)), clr
-        LOOP UNTIL angle >= startangle + rcf + (_PI / 2) + bfadjust
+            'draws the curves on the corners pixel by pixel
+            angle = startangle + rcf - bfadjust
+            DO: angle = angle + ((0.5 * _PI) / detail)
+                PSET (px + (SIN(angle) * round), py - (COS(angle) * round)), clr
+            LOOP UNTIL angle >= startangle + rcf + (_PI / 2) + bfadjust
 
-        anglebase = anglebase + cangle
-    LOOP UNTIL corner = 4
+            anglebase = anglebase + cangle
+        LOOP UNTIL corner = 4
+    ELSE
+        detail = _PI * round
+        corner = 0: DO: corner = corner + 1
+            xdir = getcornerxdir(corner)
+            ydir = getcornerydir(corner)
+            px = getpx(x, w, xdir)
+            py = getpy(y, h, ydir)
+            drawcornerconnector x, y, w, h, corner, clr, round
+            cornerangle = (_PI / 2) * (corner - 1)
+            angle = -(_PI / 2) + cornerangle
+            DO: angle = angle + ((0.5 * _PI) / detail)
+                PSET (px + (round * xdir) + (SIN(angle) * round), py + (round * ydir) - (COS(angle) * round)), clr
+            LOOP UNTIL angle >= cornerangle
+        LOOP UNTIL corner = 4
+    END IF
 END SUB
+
+SUB drawcornerconnector (x AS INTEGER, y AS INTEGER, w AS INTEGER, h AS INTEGER, corner AS INTEGER, clr AS LONG, round)
+    SELECT CASE corner
+        CASE 1: LINE (x + round, y)-(x + w - round, y), clr
+        CASE 2: LINE (x + w, y + round)-(x + w, y + h - round), clr
+        CASE 3: LINE (x + w - round, y + h)-(x + round, y + h), clr
+        CASE 4: LINE (x, y + h - round)-(x, y + round), clr
+    END SELECT
+END SUB
+
+FUNCTION ispositive (value)
+    IF value > 0 THEN ispositive = -1 ELSE ispositive = 0
+END FUNCTION
+
+FUNCTION isnegative (value)
+    IF value < 0 THEN isnegative = -1 ELSE isnegative = 0
+END FUNCTION
+
+FUNCTION getpx (x AS INTEGER, w AS INTEGER, xdir AS _BYTE)
+    IF xdir = 1 THEN getpx = x ELSE getpx = x + w
+END FUNCTION
+
+FUNCTION getpy (y AS INTEGER, h AS INTEGER, ydir AS _BYTE)
+    IF ydir = 1 THEN getpy = y ELSE getpy = y + h
+END FUNCTION
+
+FUNCTION getcornerxdir (corner AS _BYTE)
+    IF corner > 4 THEN corner = (corner MOD 4) * 4
+    SELECT CASE corner
+        CASE 1: getcornerxdir = 1
+        CASE 2: getcornerxdir = -1
+        CASE 3: getcornerxdir = -1
+        CASE 4: getcornerxdir = 1
+    END SELECT
+END FUNCTION
+
+FUNCTION getcornerydir (corner AS _BYTE)
+    IF corner > 4 THEN corner = (corner MOD 4) * 4
+    SELECT CASE corner
+        CASE 1: getcornerydir = 1
+        CASE 2: getcornerydir = 1
+        CASE 3: getcornerydir = -1
+        CASE 4: getcornerydir = -1
+    END SELECT
+END FUNCTION
 
 FUNCTION lst$ (number AS _FLOAT)
     lst$ = LTRIM$(STR$(number))
@@ -1703,6 +1806,7 @@ SUB setlicense (license AS STRING, status AS _BYTE)
 END SUB
 
 SUB loadcolors (scheme AS STRING)
+    REDIM _PRESERVE schemecolor(0) AS colour
     file$ = global.internalpath + "\schemes\" + scheme + ".colors"
     IF _FILEEXISTS(file$) THEN
         freen = FREEFILE
@@ -1732,32 +1836,3 @@ FUNCTION col& (colour AS STRING)
         IF schemecolor(i).name = colour THEN col& = _RGBA(schemecolor(i).r, schemecolor(i).g, schemecolor(i).b, schemecolor(i).a): EXIT FUNCTION
     LOOP UNTIL i = UBOUND(schemecolor)
 END FUNCTION
-
-'FUNCTION col& (colour AS STRING)
-'    SELECT CASE colour
-'        CASE "t"
-'            col& = _RGBA(0, 0, 0, 0)
-'        CASE "ui"
-'            col& = _RGBA(20, 20, 20, 255)
-'        CASE "ui2"
-'            col& = _RGBA(150, 150, 150, 255)
-'        CASE "selected"
-'            col& = col&("bg2") '_RGBA(200, 200, 220, 255)
-'        CASE "bg1"
-'            col& = _RGBA(230, 230, 230, 255)
-'        CASE "bg2"
-'            col& = _RGBA(160, 160, 160, 255)
-'        CASE "green"
-'            col& = _RGBA(33, 166, 0, 255)
-'        CASE "red"
-'            col& = _RGBA(255, 0, 55, 255)
-'        CASE "blue"
-'            col& = _RGBA(0, 144, 255, 255)
-'        CASE ELSE
-'            red$ = MID$(colour, 1, INSTR(colour, ";") - 1)
-'            green$ = MID$(colour, LEN(red$) + 1, INSTR(LEN(red$) + 1, colour, ";") - 1)
-'            blue$ = MID$(colour, LEN(red$ + ";" + green$) + 1, INSTR(LEN(red$ + ";" + green$) + 1, colour, ";") - 1)
-'            alpha$ = MID$(colour, LEN(red$ + ";" + green$ + ";" + blue$) + 1, INSTR(LEN(red$ + ";" + green$ + ";" + blue$) + 1, colour, ";") - 1)
-'            col& = _RGBA(VAL(red$), VAL(green$), VAL(blue$), VAL(alpha$))
-'    END SELECT
-'END FUNCTION
