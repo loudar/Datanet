@@ -23,7 +23,7 @@ END TYPE
 REDIM SHARED internal AS internal
 
 TYPE global
-    AS STRING nodepath, internalpath, license
+    AS STRING nodepath, internalpath, license, scheme
     AS _UNSIGNED _INTEGER64 maxnodeid
     AS _FLOAT margin, padding, round, stroke
     AS _BYTE licensestatus, exactsearch
@@ -49,14 +49,14 @@ END TYPE
 'UI
 TYPE element
     AS _BYTE show, acceptinput, allownumbers, allowtext, allowspecial, selected, state, deselect
-    AS STRING x, y, w, h, style, name, text, buffer, type, color, hovercolor, action, angle, view, round, hovertext, padding, url, switchword, group
+    AS STRING x, y, w, h, style, name, text, buffer, type, color, hovercolor, action, angle
+    AS STRING view, round, hovertext, padding, url, switchword, group, options
     AS INTEGER sel_start, sel_end, cursor, items, hovertextwait, hoverx, hovery
     AS _UNSIGNED _INTEGER64 scroll
-    AS _FLOAT statelock, hovertime
+    AS _FLOAT statelock, hovertime, value
     AS LONG drawcolor
-    AS _BYTE contextopen, allowcontextclose
+    AS _BYTE contextopen, allowcontextclose, expand
     AS INTEGER contextx, contexty
-    value AS _FLOAT
 END TYPE
 REDIM SHARED elements(0) AS element
 REDIM SHARED AS STRING viewname(0), currentview
@@ -71,6 +71,11 @@ TYPE history
     state AS element
 END TYPE
 REDIM SHARED history(0) AS history
+TYPE colour
+    name AS STRING
+    AS INTEGER r, g, b, a
+END TYPE
+REDIM SHARED schemecolor(0) AS colour
 
 TYPE rectangle
     AS _FLOAT x, y, w, h
@@ -182,6 +187,10 @@ SUB displaymenu (elementindex AS INTEGER, keyhit AS INTEGER)
     DIM coord AS rectangle
     getcoord coord, elementindex
 
+    IF this.expand THEN
+        expandelement this, elementindex
+    END IF
+
     IF mouse.right AND mouseinbounds(coord) THEN
         opencontext this
     END IF
@@ -198,6 +207,43 @@ SUB displaymenu (elementindex AS INTEGER, keyhit AS INTEGER)
     END IF
 
     elements(elementindex) = this 'needed to save the changed data into the original elements array
+END SUB
+
+SUB expandelement (this AS element, elementindex AS INTEGER)
+    DIM coord AS rectangle
+    getcoord coord, elementindex
+    DIM options(0) AS STRING
+    getoptionsarray options(), this
+
+    IF UBOUND(options) = 0 THEN EXIT SUB
+
+    originalheight = coord.h
+    optionspadding = 6
+    lineheight = _FONTHEIGHT(font_normal) + optionspadding
+    coord.h = originalheight + (lineheight * (UBOUND(options)))
+    rectangle "x=" + lst$(coord.x) + ";y=" + lst$(coord.y) + ";w=" + lst$(coord.w) + ";h=" + lst$(coord.h) + ";style=" + this.style + ";angle=" + this.angle + ";round=" + this.round, this.drawcolor
+    coord.x = coord.x + (2 * global.padding)
+    coord.y = coord.y + global.padding + optionspadding
+    DO: index = index + 1
+        _PRINTSTRING (coord.x, coord.y + (lineheight * index)), options(index)
+    LOOP UNTIL index = UBOUND(options)
+END SUB
+
+SUB getoptionsarray (array() AS STRING, this AS element)
+    DIM AS STRING sep, buffer
+    sep = "/"
+    buffer = this.options
+    DO
+        length = INSTR(buffer, sep)
+        IF length = 0 THEN
+            addtostringarray array(), buffer
+            buffer = ""
+        ELSE
+            addtostringarray array(), MID$(buffer, 1, length - 1)
+            buffer = MID$(buffer, length + 1, LEN(buffer))
+        END IF
+    LOOP UNTIL buffer = ""
+    IF UBOUND(array) > 0 THEN IF this.buffer = "" THEN this.buffer = array(1)
 END SUB
 
 SUB opencontext (this AS element)
@@ -218,6 +264,7 @@ END SUB
 SUB displaycontext (this AS element, elementindex AS INTEGER)
     REDIM _PRESERVE contextdata(0) AS STRING
     getcontextarray contextdata(), this
+    IF UBOUND(contextdata) = 0 THEN this.contextopen = 0: contextopen = 0: EXIT SUB
     maxlen = getmaxstringlen(contextdata())
     contextpadding = 6
     contextwidth = (maxlen * _FONTWIDTH(font_normal)) + (2 * contextpadding)
@@ -230,28 +277,26 @@ SUB displaycontext (this AS element, elementindex AS INTEGER)
     contextcoord.h = contextheight
     IF (mouse.left OR mouse.right) AND NOT mouseinbounds(contextcoord) AND this.allowcontextclose THEN this.contextopen = 0: contextopen = 0
 
-    IF UBOUND(contextdata) > 0 THEN
-        LINE (contextcoord.x, contextcoord.y)-(contextcoord.x + contextcoord.w, contextcoord.y + contextcoord.h), col&("bg1"), BF
-        LINE (contextcoord.x, contextcoord.y)-(contextcoord.x + contextcoord.w, contextcoord.y + contextcoord.h), col&("ui"), B
+    LINE (contextcoord.x, contextcoord.y)-(contextcoord.x + contextcoord.w, contextcoord.y + contextcoord.h), col&("bg1"), BF
+    LINE (contextcoord.x, contextcoord.y)-(contextcoord.x + contextcoord.w, contextcoord.y + contextcoord.h), col&("ui"), B
 
-        contextentry = 0: DO: contextentry = contextentry + 1
-            DIM entrycoord AS rectangle
-            entrycoord.x = contextcoord.x
-            entrycoord.y = contextcoord.y + ((_FONTHEIGHT(font_normal) + contextpadding) * (contextentry - 1))
-            entrycoord.w = contextcoord.w
-            entrycoord.h = _FONTHEIGHT(font_normal) + contextpadding
+    contextentry = 0: DO: contextentry = contextentry + 1
+        DIM entrycoord AS rectangle
+        entrycoord.x = contextcoord.x
+        entrycoord.y = contextcoord.y + ((_FONTHEIGHT(font_normal) + contextpadding) * (contextentry - 1))
+        entrycoord.w = contextcoord.w
+        entrycoord.h = _FONTHEIGHT(font_normal) + contextpadding
 
-            IF mouseinbounds(entrycoord) AND contextdata(contextentry) <> "" THEN
-                IF mouse.left THEN uicall LCASE$(contextdata(contextentry)), this, elmentindex: lockuicall = -1 ELSE lockuicall = 0
-                COLOR col&("blue"), col&("t")
-                LINE (entrycoord.x + 1, entrycoord.y + 1)-(entrycoord.x + entrycoord.w - 1, entrycoord.y + entrycoord.h - 1), col&("bg3"), BF
-            ELSE
-                COLOR col&("ui"), col&("t")
-            END IF
+        IF mouseinbounds(entrycoord) AND contextdata(contextentry) <> "" THEN
+            IF mouse.left THEN uicall LCASE$(contextdata(contextentry)), this, elmentindex: lockuicall = -1 ELSE lockuicall = 0
+            COLOR col&("active"), col&("t")
+            LINE (entrycoord.x + 1, entrycoord.y + 1)-(entrycoord.x + entrycoord.w - 1, entrycoord.y + entrycoord.h - 1), col&("bg2"), BF
+        ELSE
+            COLOR col&("ui"), col&("t")
+        END IF
 
-            _PRINTSTRING (this.contextx + contextpadding, entrycoord.y + contextpadding), contextdata(contextentry)
-        LOOP UNTIL contextentry = UBOUND(contextdata)
-    END IF
+        _PRINTSTRING (this.contextx + contextpadding, entrycoord.y + contextpadding), contextdata(contextentry)
+    LOOP UNTIL contextentry = UBOUND(contextdata)
 END SUB
 
 SUB getcontextarray (array() AS STRING, this AS element)
@@ -424,6 +469,16 @@ SUB drawelement (this AS element, elementindex AS INTEGER, coord AS rectangle, i
             END IF
             COLOR this.drawcolor, col&("t")
             _PRINTSTRING (coord.x + boxsize + global.margin, coord.y), this.text + " " + switchword$(this.switchword, this.state)
+        CASE "dropdown"
+            rectangle "x=" + lst$(coord.x) + ";y=" + lst$(coord.y) + ";w=" + lst$(coord.w) + ";h=" + lst$(coord.h) + ";style=" + this.style + ";angle=" + this.angle + ";round=" + this.round, this.drawcolor
+            coord.x = coord.x + (2 * global.padding)
+            coord.y = coord.y + global.padding
+            IF LCASE$(this.style) = "bf" THEN
+                COLOR col&("bg1"), col&("t")
+            ELSE
+                COLOR this.drawcolor, col&("t")
+            END IF
+            _PRINTSTRING (coord.x, coord.y), this.text + " " + this.buffer
         CASE "list"
             coord.x = coord.x + (2 * global.padding)
             coord.y = coord.y + global.padding
@@ -473,7 +528,7 @@ SUB displaylistarray (this AS element, array() AS STRING, coord AS rectangle)
 
         IF mouse.x > coord.x - (2 * global.padding) AND mouse.x < coord.x + coord.w - (2 * global.padding) AND mouse.y > listitemy AND mouse.y < listitemy + _FONTHEIGHT(font_normal) THEN
             IF mouse.left THEN clicklistitem this, array()
-            COLOR col&("blue"), col&("t")
+            COLOR col&("active"), col&("t")
         ELSE
             COLOR this.drawcolor, col&("t")
         END IF
@@ -633,6 +688,9 @@ SUB elementmousehandling (this AS element, elementindex AS INTEGER, invoke AS in
             ELSEIF mouse.left AND this.action = "" AND NOT active(elementindex) AND textselectable(this) THEN
                 activeelement = elementindex
                 this.sel_start = 0: this.sel_end = 0
+            ELSEIF mouse.left AND this.type = "dropdown" AND this.statelock = 0 THEN
+                IF this.expand = -1 THEN this.expand = 0 ELSE this.expand = -1
+                this.statelock = -1
             END IF
 
             IF mouse.scroll THEN
@@ -673,7 +731,7 @@ SUB elementmousehandling (this AS element, elementindex AS INTEGER, invoke AS in
         END IF
         IF NOT active(elementindex) THEN this.drawcolor = col&(this.hovercolor)
     ELSEIF active(elementindex) THEN
-        this.drawcolor = col&("blue")
+        this.drawcolor = col&("active")
     ELSEIF this.selected THEN
         this.drawcolor = col&("green")
     ELSE
@@ -713,6 +771,7 @@ SUB uicall (func AS STRING, this AS element, elementindex AS INTEGER)
             CASE "revert"
                 IF elementindex = history(UBOUND(history)).element THEN gobackintime this
             CASE "uppercase"
+                addtohistory this, elementindex
                 IF longselection(this) THEN
                     minc = min(this.sel_start, this.sel_end)
                     maxc = max(this.sel_start, this.sel_end)
@@ -721,6 +780,7 @@ SUB uicall (func AS STRING, this AS element, elementindex AS INTEGER)
                     this.buffer = UCASE$(this.buffer)
                 END IF
             CASE "lowercase"
+                addtohistory this, elementindex
                 IF longselection(this) THEN
                     minc = min(this.sel_start, this.sel_end)
                     maxc = max(this.sel_start, this.sel_end)
@@ -1236,13 +1296,15 @@ SUB loadconfig
     global.stroke = getargumentv(config$, "stroke")
     global.license = getargument$(config$, "license")
     global.exactsearch = getargumentv(config$, "exactsearch")
+    global.scheme = getargument$(config$, "colorscheme")
+    loadcolors global.scheme
     IF checkLicense(_INFLATE$(global.license)) = 0 THEN setlicense "", 0: saveconfig
     IF global.license <> "" THEN global.licensestatus = -1
 END SUB
 
 SUB saveconfig
     config$ = "round=" + lst$(global.round) + ";margin=" + lst$(global.margin) + ";padding=" + lst$(global.padding) + ";stroke=" + lst$(global.stroke) + ";license=" + global.license
-    config$ = config$
+    config$ = config$ + ";colorscheme=" + global.scheme
     configfile$ = global.internalpath + "\config.dst"
     freen = FREEFILE
     OPEN configfile$ FOR OUTPUT AS #freen
@@ -1316,6 +1378,7 @@ SUB loadui
                             elements(eub).url = getargument$(uielement$, "url")
                             elements(eub).switchword = getargument$(uielement$, "switchword")
                             elements(eub).group = getargument$(uielement$, "group")
+                            elements(eub).options = getargument$(uielement$, "options")
                             elements(eub).selected = 0
 
                             IF elements(eub).type = "input" AND activeelement = 0 THEN
@@ -1496,6 +1559,8 @@ SUB rectangle (arguments AS STRING, clr AS LONG)
             PAINT (x + (w / 2), y + (h / 2)), clr, clr
         CASE "B"
             rectangleoutline x, y, w, h, round, rotation, clr, 0
+        CASE ELSE
+            rectangleoutline x, y, w, h, round, rotation, clr, 0
     END SELECT
 END SUB
 
@@ -1637,33 +1702,62 @@ SUB setlicense (license AS STRING, status AS _BYTE)
     global.licensestatus = status
 END SUB
 
+SUB loadcolors (scheme AS STRING)
+    file$ = global.internalpath + "\schemes\" + scheme + ".colors"
+    IF _FILEEXISTS(file$) THEN
+        freen = FREEFILE
+        OPEN file$ FOR INPUT AS #freen
+        IF EOF(freen) = 0 THEN
+            DO
+                INPUT #freen, color$
+                addcolor color$
+            LOOP UNTIL EOF(freen)
+        END IF
+        CLOSE #freen
+    END IF
+END SUB
+
+SUB addcolor (colour AS STRING)
+    REDIM _PRESERVE schemecolor(UBOUND(schemecolor) + 1) AS colour
+    index = UBOUND(schemecolor)
+    schemecolor(index).name = getargument$(colour, "name")
+    schemecolor(index).r = getargumentv(colour, "r")
+    schemecolor(index).g = getargumentv(colour, "g")
+    schemecolor(index).b = getargumentv(colour, "b")
+    schemecolor(index).a = getargumentv(colour, "a")
+END SUB
+
 FUNCTION col& (colour AS STRING)
-    SELECT CASE colour
-        CASE "t"
-            col& = _RGBA(0, 0, 0, 0)
-        CASE "ui"
-            col& = _RGBA(20, 20, 20, 255)
-        CASE "ui2"
-            col& = _RGBA(150, 150, 150, 255)
-        CASE "selected"
-            col& = col&("bg3") '_RGBA(200, 200, 220, 255)
-        CASE "bg1"
-            col& = _RGBA(230, 230, 230, 255)
-        CASE "bg2"
-            col& = _RGBA(160, 160, 160, 255)
-        CASE "bg3"
-            col& = _RGBA(220, 220, 220, 255)
-        CASE "green"
-            col& = _RGBA(33, 166, 0, 255)
-        CASE "red"
-            col& = _RGBA(255, 0, 55, 255)
-        CASE "blue"
-            col& = _RGBA(0, 144, 255, 255)
-        CASE ELSE
-            red$ = MID$(colour, 1, INSTR(colour, ";") - 1)
-            green$ = MID$(colour, LEN(red$) + 1, INSTR(LEN(red$) + 1, colour, ";") - 1)
-            blue$ = MID$(colour, LEN(red$ + ";" + green$) + 1, INSTR(LEN(red$ + ";" + green$) + 1, colour, ";") - 1)
-            alpha$ = MID$(colour, LEN(red$ + ";" + green$ + ";" + blue$) + 1, INSTR(LEN(red$ + ";" + green$ + ";" + blue$) + 1, colour, ";") - 1)
-            col& = _RGBA(VAL(red$), VAL(green$), VAL(blue$), VAL(alpha$))
-    END SELECT
+    DO: i = i + 1
+        IF schemecolor(i).name = colour THEN col& = _RGBA(schemecolor(i).r, schemecolor(i).g, schemecolor(i).b, schemecolor(i).a): EXIT FUNCTION
+    LOOP UNTIL i = UBOUND(schemecolor)
 END FUNCTION
+
+'FUNCTION col& (colour AS STRING)
+'    SELECT CASE colour
+'        CASE "t"
+'            col& = _RGBA(0, 0, 0, 0)
+'        CASE "ui"
+'            col& = _RGBA(20, 20, 20, 255)
+'        CASE "ui2"
+'            col& = _RGBA(150, 150, 150, 255)
+'        CASE "selected"
+'            col& = col&("bg2") '_RGBA(200, 200, 220, 255)
+'        CASE "bg1"
+'            col& = _RGBA(230, 230, 230, 255)
+'        CASE "bg2"
+'            col& = _RGBA(160, 160, 160, 255)
+'        CASE "green"
+'            col& = _RGBA(33, 166, 0, 255)
+'        CASE "red"
+'            col& = _RGBA(255, 0, 55, 255)
+'        CASE "blue"
+'            col& = _RGBA(0, 144, 255, 255)
+'        CASE ELSE
+'            red$ = MID$(colour, 1, INSTR(colour, ";") - 1)
+'            green$ = MID$(colour, LEN(red$) + 1, INSTR(LEN(red$) + 1, colour, ";") - 1)
+'            blue$ = MID$(colour, LEN(red$ + ";" + green$) + 1, INSTR(LEN(red$ + ";" + green$) + 1, colour, ";") - 1)
+'            alpha$ = MID$(colour, LEN(red$ + ";" + green$ + ";" + blue$) + 1, INSTR(LEN(red$ + ";" + green$ + ";" + blue$) + 1, colour, ";") - 1)
+'            col& = _RGBA(VAL(red$), VAL(green$), VAL(blue$), VAL(alpha$))
+'    END SELECT
+'END FUNCTION
