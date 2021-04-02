@@ -24,7 +24,7 @@ REDIM SHARED internal AS internal
 
 TYPE global
     AS STRING nodepath, internalpath, license, scheme
-    AS _UNSIGNED _INTEGER64 maxnodeid
+    AS _UNSIGNED _INTEGER64 maxnodeid, matchthreshhold
     AS _FLOAT margin, padding, round, stroke
     AS _BYTE licensestatus, exactsearch, actionlock
 END TYPE
@@ -506,6 +506,7 @@ SUB drawelement (this AS element, elementindex AS INTEGER, coord AS rectangle, i
                 COLOR this.drawcolor, col&("t")
             END IF
             _PRINTSTRING (coord.x, coord.y), this.text + " " + this.buffer
+
         CASE "list"
             coord.x = coord.x + (2 * global.padding)
             coord.y = coord.y + global.padding
@@ -1265,10 +1266,34 @@ SUB getnodearray (array() AS STRING, search AS STRING)
         DO: nodecount = nodecount + 1
             searchn = search + "_" + lst$(nodecount)
             file$ = path$(searchn)
-            IF _FILEEXISTS(file$) THEN REDIM _PRESERVE array(UBOUND(array) + 1) AS STRING: array(UBOUND(array)) = searchn
+            IF _FILEEXISTS(file$) THEN addtostringarray array(), searchn
         LOOP UNTIL _FILEEXISTS(file$) = 0
     END IF
+    IF global.exactsearch THEN
+        DIM AS STRING nodefolders(0), nodefiles(0)
+        GetFileList global.nodepath, nodefolders(), nodefiles()
+        IF UBOUND(nodefiles) > 0 THEN
+            DO: index = index + 1
+                IF MID$(nodefiles(index), _INSTRREV(nodefiles(index), ".") + 1, 4) = "node" THEN
+                    nodename$ = MID$(nodefiles(index), 1, _INSTRREV(nodefiles(index), ".") - 1)
+                    IF partmatch(nodename$, search) AND notinarray(array(), nodename$) AND LEN(search) >= global.matchthreshhold THEN addtostringarray array(), nodename$
+                END IF
+            LOOP UNTIL index = UBOUND(nodefiles)
+        END IF
+    END IF
 END SUB
+
+FUNCTION notinarray (array() AS STRING, search AS STRING)
+    IF UBOUND(array) = 0 THEN notinarray = -1: EXIT FUNCTION
+    DO: index = index + 1
+        IF array(index) = search THEN notinarray = 0: EXIT FUNCTION
+    LOOP UNTIL index = UBOUND(array)
+    notinarray = -1
+END FUNCTION
+
+FUNCTION partmatch (comparison AS STRING, search AS STRING)
+    IF INSTR(comparison, search) > 0 AND LEN(search) >= global.matchthreshhold THEN partmatch = -1 ELSE partmatch = 0
+END FUNCTION
 
 FUNCTION getnodecount (arguments AS STRING) 'counts the amount of nodes with a given name <target>
     DIM AS STRING nodetarget
@@ -1330,6 +1355,7 @@ SUB loadconfig
     global.license = getargument$(config$, "license")
     global.exactsearch = getargumentv(config$, "exactsearch")
     global.scheme = getargument$(config$, "colorscheme")
+    global.matchthreshhold = getargumentv(config$, "matchthreshhold")
     loadcolors global.scheme
     IF checkLicense(_INFLATE$(global.license)) = 0 THEN setlicense "", 0: saveconfig
     IF global.license <> "" THEN global.licensestatus = -1
@@ -1337,7 +1363,7 @@ END SUB
 
 SUB saveconfig
     config$ = "round=" + lst$(global.round) + ";margin=" + lst$(global.margin) + ";padding=" + lst$(global.padding) + ";stroke=" + lst$(global.stroke) + ";license=" + global.license
-    config$ = config$ + ";colorscheme=" + global.scheme
+    config$ = config$ + ";colorscheme=" + global.scheme + ";matchthreshhold=" + lst$(global.matchthreshhold) + ";exactsearch=" + lst$(global.exactsearch)
     configfile$ = global.internalpath + "\config.dst"
     freen = FREEFILE
     OPEN configfile$ FOR OUTPUT AS #freen
