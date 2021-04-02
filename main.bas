@@ -34,7 +34,7 @@ TYPE mouse
     AS _FLOAT x, y
     AS _BYTE left, right, leftrelease, rightrelease
     AS INTEGER scroll
-    AS _FLOAT lefttime, righttime, lefttimedif, righttimedif, lefttimedif2
+    AS _FLOAT lefttime, righttime, lefttimedif, righttimedif, lefttimedif2, offsetx, offsety
 END TYPE
 REDIM SHARED mouse AS mouse
 
@@ -53,7 +53,7 @@ TYPE element
     AS STRING view, round, hovertext, padding, url, switchword, group, options
     AS INTEGER sel_start, sel_end, cursor, items, hovertextwait, hoverx, hovery
     AS _UNSIGNED _INTEGER64 scroll
-    AS _FLOAT statelock, hovertime, value
+    AS _FLOAT statelock, hovertime, value, offsetx, offsety
     AS LONG drawcolor
     AS _BYTE contextopen, allowcontextclose, expand
     AS INTEGER contextx, contexty
@@ -76,6 +76,15 @@ TYPE colour
     AS INTEGER r, g, b, a
 END TYPE
 REDIM SHARED schemecolor(0) AS colour
+TYPE gradient
+    color AS LONG
+    gpos AS _FLOAT
+END TYPE
+REDIM SHARED gradient(0, 0) AS gradient
+TYPE countlist
+    name AS STRING
+    count AS _UNSIGNED _INTEGER64
+END TYPE
 
 TYPE rectangle
     AS _FLOAT x, y, w, h
@@ -113,8 +122,10 @@ LOOP
 
 SUB checkresize
     IF _RESIZE THEN
-        winresx = _RESIZEWIDTH
-        winresy = _RESIZEHEIGHT
+        DO
+            winresx = _RESIZEWIDTH
+            winresy = _RESIZEHEIGHT
+        LOOP WHILE _RESIZE
         IF (winresx <> _WIDTH(0) OR winresy <> _HEIGHT(0)) THEN
             setwindow winresx, winresy
         END IF
@@ -131,11 +142,15 @@ END SUB
 
 SUB checkmouse
     mouse.scroll = 0
+    startx = mouse.x
+    starty = mouse.y
     DO
         mouse.x = _MOUSEX
         mouse.y = _MOUSEY
         mouse.scroll = mouse.scroll + _MOUSEWHEEL
         mouse.left = _MOUSEBUTTON(1)
+        mouse.offsetx = mouse.x - startx
+        mouse.offsety = mouse.y - starty
         IF mouse.left THEN
             IF mouse.leftrelease THEN
                 mouse.leftrelease = 0
@@ -475,13 +490,21 @@ SUB drawelement (this AS element, elementindex AS INTEGER, coord AS rectangle, i
             LINE (coord.x, coord.y)-(coord.x + coord.w - global.padding, coord.y), this.drawcolor
         CASE "box"
             rectangle "x=" + lst$(coord.x) + ";y=" + lst$(coord.y) + ";w=" + lst$(coord.w) + ";h=" + lst$(coord.h) + ";style=" + this.style + ";angle=" + this.angle + ";round=" + this.round, this.drawcolor
+        CASE "gradient"
+            cleargradients
+            newgcolor 1, 1, 0, col&("ui")
+            newgcolor 1, 2, 33, col&("ui2")
+            newgcolor 1, 3, 67, col&("bg2")
+            newgcolor 1, 4, 100, col&("active")
+            drawgradient 1, coord.x, coord.x + coord.w, coord.y, coord.y + coord.h, 0, "h"
         CASE "checkbox"
             boxsize = _FONTHEIGHT(font_normal) * 0.75
             boxoffset = 0
             coord.w = coord.w + boxsize + global.margin
             coord.y = coord.y + global.padding
-            IF this.state = -1 THEN this.style = "bf" ELSE this.style = "b"
-            rectangle "x=" + lst$(coord.x) + ";y=" + lst$(coord.y + boxoffset) + ";w=" + lst$(boxsize) + ";h=" + lst$(boxsize) + ";style=" + this.style + ";round=0", this.drawcolor
+            rectangle "x=" + lst$(coord.x) + ";y=" + lst$(coord.y + boxoffset) + ";w=" + lst$(boxsize) + ";h=" + lst$(boxsize) + ";style=b;round=0", this.drawcolor
+            inset = 3
+            IF this.state = -1 THEN rectangle "x=" + lst$(coord.x + inset) + ";y=" + lst$(coord.y + boxoffset + inset) + ";w=" + lst$(boxsize - (2 * inset)) + ";h=" + lst$(boxsize - (2 * inset)) + ";style=bf;round=0", this.drawcolor
             COLOR this.drawcolor, col&("t")
             _PRINTSTRING (coord.x + boxsize + global.margin, coord.y), this.text + " " + switchword$(this.switchword, this.state)
         CASE "radiobutton"
@@ -510,8 +533,9 @@ SUB drawelement (this AS element, elementindex AS INTEGER, coord AS rectangle, i
         CASE "slider"
             coord.y = coord.y + global.padding
             COLOR this.drawcolor, col&("t")
-            _PRINTSTRING (coord.x, coord.y), this.text + " " + this.buffer
-            textwidth = LEN(this.text + " " + this.buffer) * _FONTWIDTH(font_normal) + global.margin
+            _PRINTSTRING (coord.x, coord.y), this.text
+            textwidth = LEN(this.text) * _FONTWIDTH(font_normal) + global.margin
+            _PRINTSTRING (coord.x + textwidth + global.sliderwidth + global.margin, coord.y), this.buffer
             val_start = coord.x + textwidth
             val_end = coord.x + textwidth + global.sliderwidth
             cy = coord.y + (_FONTHEIGHT(font_normal) / 2)
@@ -519,6 +543,51 @@ SUB drawelement (this AS element, elementindex AS INTEGER, coord AS rectangle, i
             CIRCLE (val_start + (this.value * (val_end - val_start)), cy), circlesize, this.drawcolor, BF
             PAINT (val_start + (this.value * (val_end - val_start)), cy), this.drawcolor, this.drawcolor
             LINE (val_start, cy)-(val_end, cy + 1), this.drawcolor, BF
+        CASE "nodegraph"
+            searchnode$ = elements(gettitleid).text
+            DIM AS STRING linkarray(0)
+            getlinkarray linkarray(), searchnode$
+            DIM AS countlist linkcount(0)
+            getlinkcounts linkcount(), linkarray(), "target"
+
+            scrolllimit = INT((coord.h / 2) / 25)
+            IF this.scroll > scrolllimit THEN this.scroll = scrolllimit
+            IF this.scroll < 1 THEN this.scroll = 1
+            distance = 25 * (scrolllimit - this.scroll)
+            nodesize = 10
+            centerx = coord.x + (coord.w / 2) + this.offsetx
+            centery = coord.y + (coord.h / 2) + this.offsety
+            IF UBOUND(linkcount) > 0 THEN
+                node = 0: DO: node = node + 1
+                    changex = SIN((node - 1) * (_PI / 4)) * distance
+                    changey = -COS((node - 1) * (_PI / 4)) * distance
+                    nodex = centerx + changex
+                    nodey = centery + changey
+
+                    DIM nodecoord AS rectangle
+                    nodecoord.x = nodex - (nodesize / 2)
+                    nodecoord.y = nodey - (nodesize / 2)
+                    nodecoord.w = nodesize
+                    nodecoord.h = nodesize
+
+                    IF nodecoord.x > coord.x AND nodecoord.x + nodecoord.w < coord.x + coord.w AND nodecoord.y > coord.y AND nodecoord.y + nodecoord.h < coord.y + coord.h THEN
+                        DIM nodecolor AS LONG
+                        IF mouseinbounds(nodecoord) THEN
+                            IF mouse.left THEN dothis "action=view.nodegraph;nodetarget=" + linkcount(node).name
+                            nodecolor = col&(this.hovercolor)
+                        ELSE
+                            nodecolor = col&(this.color)
+                        END IF
+                        LINE (centerx, centery)-(nodex, nodey), col&("bg2")
+                        LINE (nodecoord.x, nodecoord.y)-(nodecoord.x + nodecoord.w, nodecoord.y + nodecoord.h), nodecolor, BF
+                        COLOR nodecolor, col&("t")
+                        _PRINTSTRING (nodecoord.x + nodecoord.w + global.margin, nodecoord.y), linkcount(node).name
+                    END IF
+                LOOP UNTIL node = UBOUND(linkcount)
+            END IF
+
+            LINE (centerx - (nodesize / 2), centery - (nodesize / 2))-(centerx + (nodesize / 2), centery + (nodesize / 2)), this.drawcolor, BF
+            rectangle "x=" + lst$(coord.x) + ";y=" + lst$(coord.y) + ";w=" + lst$(coord.w) + ";h=" + lst$(coord.h) + ";style=" + this.style + ";angle=" + this.angle + ";round=" + this.round, this.drawcolor
         CASE "list"
             coord.x = coord.x + (2 * global.padding)
             coord.y = coord.y + global.padding
@@ -540,7 +609,45 @@ SUB drawelement (this AS element, elementindex AS INTEGER, coord AS rectangle, i
     displayselection this, elementindex, coord
 END SUB
 
+SUB getlinkcounts (target() AS countlist, source() AS STRING, attribute AS STRING)
+    REDIM _PRESERVE target(0) AS countlist
+    IF UBOUND(source) > 0 THEN
+        sindex = 0: DO: sindex = sindex + 1
+            found = 0
+            IF UBOUND(target) > 0 THEN
+                tindex = 0: DO: tindex = tindex + 1
+                    IF target(tindex).name = getargument$(source(sindex), attribute) THEN
+                        target(tindex).count = target(tindex).count + 1
+                        found = -1
+                    END IF
+                LOOP UNTIL tindex = UBOUND(target) OR found = -1
+            END IF
+            IF found = 0 THEN
+                REDIM _PRESERVE target(UBOUND(target) + 1) AS countlist
+                target(UBOUND(target)).name = getargument$(source(sindex), attribute)
+                target(UBOUND(target)).count = 1
+            END IF
+        LOOP UNTIL sindex = UBOUND(source)
+        sortcountlist target()
+    END IF
+END SUB
+
+SUB sortcountlist (target() AS countlist)
+    unsorted = -1
+    IF UBOUND(target) < 2 THEN EXIT SUB
+    DO
+        swapped = 0
+        i = 0: DO: i = i + 1
+            IF target(i).count > target(i + 1).count THEN
+                SWAP target(i), target(i + 1)
+                swapped = -1
+            END IF
+        LOOP UNTIL swapped = -1 OR i = UBOUND(target) - 1
+    LOOP UNTIL i = UBOUND(target) - 1
+END SUB
+
 SUB getlinkarray (array() AS STRING, nodetarget AS STRING)
+    REDIM _PRESERVE array AS STRING
     file$ = path$(nodetarget)
     freen = FREEFILE
     OPEN file$ FOR INPUT AS #freen
@@ -567,7 +674,7 @@ SUB displaylistarray (this AS element, array() AS STRING, coord AS rectangle)
         listitemy = coord.y + ((global.margin + _FONTHEIGHT(font_normal)) * (n - 1))
 
         IF mouse.x > coord.x - (2 * global.padding) AND mouse.x < coord.x + coord.w - (2 * global.padding) AND mouse.y > listitemy AND mouse.y < listitemy + _FONTHEIGHT(font_normal) THEN
-            IF mouse.left THEN clicklistitem this, array()
+            IF mouse.left THEN clicklistitem this, array(), n
             COLOR col&("active"), col&("t")
         ELSE
             COLOR this.drawcolor, col&("t")
@@ -590,10 +697,10 @@ SUB displaylistarray (this AS element, array() AS STRING, coord AS rectangle)
     this.items = n - this.scroll
 END SUB
 
-SUB clicklistitem (this AS element, array() AS STRING)
+SUB clicklistitem (this AS element, array() AS STRING, n AS INTEGER)
     SELECT CASE this.name
         CASE "nodelist"
-            dothis "action=view.node;nodetarget=" + array(n)
+            dothis "action=view.nodegraph;nodetarget=" + array(n)
         CASE "linklist"
             'TODO
     END SELECT
@@ -648,6 +755,10 @@ END FUNCTION
 
 FUNCTION textselectable (this AS element)
     IF this.type = "input" OR this.type = "text" OR this.type = "time" OR this.type = "date" THEN textselectable = -1 ELSE textselectable = 0
+END FUNCTION
+
+FUNCTION draggable (this AS element)
+    IF this.type = "nodegraph" THEN draggable = -1 ELSE draggable = 0
 END FUNCTION
 
 FUNCTION expandable (this AS element)
@@ -728,7 +839,7 @@ SUB elementmousehandling (this AS element, elementindex AS INTEGER, invoke AS in
                 ELSEIF expandable(this) AND this.statelock = 0 THEN
                     uicall "expand", this, elementindex
                 ELSEIF this.type = "slider" THEN
-                    textwidth = LEN(this.text + " " + this.buffer) * _FONTWIDTH(font_normal) + global.margin
+                    textwidth = LEN(this.text) * _FONTWIDTH(font_normal) + global.margin
                     val_start = coord.x + textwidth
                     val_end = coord.x + textwidth + global.sliderwidth
                     IF mouse.x > val_start AND mouse.x < val_end THEN
@@ -774,6 +885,11 @@ SUB elementmousehandling (this AS element, elementindex AS INTEGER, invoke AS in
                 ELSE 'triple click
                     uicall "select all", this, elementindex
                 END IF
+            END IF
+        ELSEIF draggable(this) THEN
+            IF mouse.left THEN
+                this.offsetx = this.offsetx + mouse.offsetx
+                this.offsety = this.offsety + mouse.offsety
             END IF
         END IF
         IF NOT active(elementindex) THEN this.drawcolor = col&(this.hovercolor)
@@ -892,6 +1008,8 @@ SUB elementkeyhandling (this AS element, elementindex AS INTEGER, bufferchar AS 
                     uicall "search", this, elementindex
                 CASE "n" 'replace buffer with "action=add.node;nodetarget="
                     uicall "add node", this, elementindex
+                CASE "r" 'should reset the offset position, but doesn't for some reason
+                    this.offsetx = 0: this.offsety = 0
                 CASE ELSE
                     insertbufferchar this, elementindex, bufferchar
             END SELECT
@@ -1029,6 +1147,7 @@ FUNCTION shiftdown
 END FUNCTION
 
 FUNCTION getnodeinfo$ (attribute AS STRING, target AS STRING)
+    IF illegalfile(target) THEN getnodeinfo$ = "": EXIT FUNCTION
     file$ = path$(target)
     IF _FILEEXISTS(file$) THEN
         freen = FREEFILE
@@ -1126,6 +1245,8 @@ FUNCTION geteypos$ (e AS INTEGER)
         geteypos$ = lst$(VAL(geteypos$(e - 1)) + VAL(geteheight$(e - 1)) + global.margin)
     ELSEIF (elements(e).y = "previoustop" OR elements(e).y = "prevt" OR elements(e).y = "pt" OR elements(e).y = "-flex") AND e > 1 THEN
         geteypos$ = lst$(VAL(geteypos$(e - 1)) - VAL(geteheight$(e)) - global.margin)
+    ELSEIF (elements(e).y = "nexttop" OR elements(e).y = "nextt" OR elements(e).y = "nt") AND e < UBOUND(elements) THEN
+        geteypos$ = lst$(VAL(geteypos$(e + 1)) - VAL(geteheight$(e)) - global.margin)
     ELSEIF (elements(e).y = "previous" OR elements(e).y = "p" OR elements(e).y = "prev") AND e > 1 THEN
         geteypos$ = geteypos$(e - 1)
     ELSEIF (elements(e).y = "bottom" OR elements(e).y = "b") THEN
@@ -1283,10 +1404,10 @@ SUB writenode (arguments AS STRING, this AS node)
     END IF
     filen = FREEFILE
     OPEN file$ FOR OUTPUT AS #filen
-    WRITE #filen, "date=" + this.date
-    WRITE #filen, "time=" + this.time
-    WRITE #filen, "name=" + this.name
-    WRITE #filen, "type=" + this.type
+    PRINT #filen, "date=" + this.date
+    PRINT #filen, "time=" + this.time
+    PRINT #filen, "name=" + this.name
+    PRINT #filen, "type=" + this.type
     CLOSE #filen
 END SUB
 
@@ -1345,6 +1466,7 @@ SUB remove.nodelink (arguments AS STRING)
 END SUB
 
 SUB getnodearray (array() AS STRING, search AS STRING)
+    IF illegalfile(search) THEN EXIT SUB
     DIM searchn AS STRING
     file$ = path$(search)
     IF _FILEEXISTS(file$) THEN
@@ -1368,6 +1490,11 @@ SUB getnodearray (array() AS STRING, search AS STRING)
         END IF
     END IF
 END SUB
+
+FUNCTION illegalfile (totest AS STRING)
+    t$ = LCASE$(totest)
+    IF t$ = "con" THEN illegalfile = -1 ELSE illegalfile = 0
+END FUNCTION
 
 FUNCTION notinarray (array() AS STRING, search AS STRING)
     IF UBOUND(array) = 0 THEN notinarray = -1: EXIT FUNCTION
@@ -1418,7 +1545,7 @@ SUB writenodelink (arguments AS STRING, this AS nodelink) 'writes a nodelink to 
     IF _FILEEXISTS(file$) THEN
         filen = FREEFILE
         OPEN file$ FOR APPEND AS #filen
-        WRITE #filen, "link:date=" + this.date + ";time=" + this.time + ";origin=" + this.origin + ";name=" + this.name + ";target=" + this.target
+        PRINT #filen, "link:date=" + this.date + ";time=" + this.time + ";origin=" + this.origin + ";name=" + this.name + ";target=" + this.target
         CLOSE #filen
     END IF
 END SUB
@@ -1577,6 +1704,8 @@ SUB setglobal (globalname AS STRING, value AS STRING)
     SELECT CASE globalname
         CASE "colorscheme"
             global.scheme = value
+            saveconfig
+            loadconfig
         CASE "exactsearch"
             global.exactsearch = VAL(value)
         CASE "license"
@@ -1669,7 +1798,7 @@ FUNCTION getargumentv (basestring AS STRING, argument AS STRING)
 END FUNCTION
 
 FUNCTION path$ (nodename AS STRING)
-    path$ = global.nodepath + "\" + nodename + ".node"
+    path$ = global.nodepath + "\" + LCASE$(nodename) + ".node"
 END FUNCTION
 
 FUNCTION set (tocheck AS STRING) 'just returns if a string variable has a value or not
@@ -1977,3 +2106,101 @@ FUNCTION col& (colour AS STRING)
         IF schemecolor(i).name = colour THEN col& = _RGBA(schemecolor(i).r, schemecolor(i).g, schemecolor(i).b, schemecolor(i).a): EXIT FUNCTION
     LOOP UNTIL i = UBOUND(schemecolor)
 END FUNCTION
+
+SUB cleargradients
+    REDIM _PRESERVE gradient(0, 0) AS gradient
+END SUB
+
+SUB newgcolor (gindex AS INTEGER, cindex AS INTEGER, position AS _FLOAT, clr AS LONG)
+    IF cindex > 0 AND gindex > 0 THEN
+        IF gindex > UBOUND(gradient, 1) THEN REDIM _PRESERVE gradient(UBOUND(gradient, 1) + 1, UBOUND(gradient, 2)) AS gradient
+        IF cindex > UBOUND(gradient, 2) THEN REDIM _PRESERVE gradient(UBOUND(gradient, 1), UBOUND(gradient, 2) + 1) AS gradient
+        gradient(gindex, cindex).color = clr
+        gradient(gindex, cindex).gpos = position
+    END IF
+END SUB
+
+FUNCTION gradientcolor& (gindex AS INTEGER, grposition)
+    IF UBOUND(gradient, 1) = 0 OR UBOUND(gradient, 2) = 0 THEN EXIT FUNCTION
+
+    grcolor = 0: DO: grcolor = grcolor + 1
+        IF grposition = gradient(gindex, grcolor).gpos THEN
+            gradientcolor& = gradient(gindex, grcolor).color
+            EXIT FUNCTION
+        ELSE
+            IF grcolor < UBOUND(gradient, 2) THEN
+                IF grposition > gradient(gindex, grcolor).gpos AND grposition < gradient(gindex, grcolor + 1).gpos THEN
+                    r1 = _RED(gradient(gindex, grcolor).color)
+                    g1 = _GREEN(gradient(gindex, grcolor).color)
+                    b1 = _BLUE(gradient(gindex, grcolor).color)
+                    a1 = _ALPHA(gradient(gindex, grcolor).color)
+                    r2 = _RED(gradient(gindex, grcolor + 1).color)
+                    g2 = _GREEN(gradient(gindex, grcolor + 1).color)
+                    b2 = _BLUE(gradient(gindex, grcolor + 1).color)
+                    a2 = _ALPHA(gradient(gindex, grcolor + 1).color)
+                    p1 = gradient(gindex, grcolor).gpos
+                    p2 = gradient(gindex, grcolor + 1).gpos
+                    f = (grposition - p1) / (p2 - p1)
+                    IF r1 > r2 THEN
+                        rr = r1 - ((r1 - r2) * f)
+                    ELSEIF r1 = r2 THEN
+                        rr = r1
+                    ELSE
+                        rr = r1 + ((r2 - r1) * f)
+                    END IF
+                    IF g1 > g2 THEN
+                        gg = g1 - ((g1 - g2) * f)
+                    ELSEIF g1 = g2 THEN
+                        gg = g1
+                    ELSE
+                        gg = g1 + ((g2 - g1) * f)
+                    END IF
+                    IF b1 > b2 THEN
+                        bb = b1 - ((b1 - b2) * f)
+                    ELSEIF b1 = b2 THEN
+                        bb = b1
+                    ELSE
+                        bb = b1 + ((b2 - b1) * f)
+                    END IF
+                    IF a1 > a2 THEN
+                        aa = a1 - ((a1 - a2) * f)
+                    ELSEIF a1 = a2 THEN
+                        aa = a1
+                    ELSE
+                        aa = a1 + ((a2 - a1) * f)
+                    END IF
+                    gradientcolor& = _RGBA(INT(rr), INT(gg), INT(bb), INT(aa))
+                    EXIT FUNCTION
+                END IF
+            END IF
+        END IF
+    LOOP UNTIL grcolor = UBOUND(gradient, 2)
+END FUNCTION
+
+SUB drawgradient (gradient, lx, ux, ly, uy, Around, orientation$)
+    round = Around
+    SELECT CASE orientation$
+        CASE "h"
+            IF ux < lx THEN: buffer = ux: ux = lx: lx = buffer
+            IF round > 0 THEN
+                rx = lx: DO: rx = rx + 1
+                    LINE (rx, ly + COS((round - rx) / round * _PI / 2))-(rx, uy - COS((round - rx) / round * _PI / 2)), gradientcolor&(gradient, (rx - lx) / (ux - lx) * 100)
+                LOOP UNTIL rx >= lx + round
+                DO: rx = rx + 1
+                    LINE (rx, ly)-(rx, uy), gradientcolor&(gradient, (rx - lx) / (ux - lx) * 100)
+                LOOP UNTIL rx >= ux - round
+                DO: rx = rx + 1
+                    LINE (rx, ly + SIN((rx - (ux - round)) / round * _PI / 2))-(rx, uy - SIN((rx - (ux - round)) / round * _PI / 2)), gradientcolor&(gradient, (rx - lx) / (ux - lx) * 100)
+                LOOP UNTIL rx >= ux
+            ELSE
+                rx = lx: DO: rx = rx + 1
+                    LINE (rx, ly)-(rx, uy), gradientcolor&(gradient, (rx - lx) / (ux - lx) * 100)
+                LOOP UNTIL rx >= ux
+            END IF
+        CASE "v"
+            IF uy < ly THEN: buffer = uy: uy = ly: ly = buffer
+            ry = 0: DO: ry = ry + 1
+                LINE (lx, ly + ry)-(ux, ly + ry), gradientcolor&(gradient, ry / (uy - ly) * 100)
+            LOOP UNTIL ry >= uy - ly
+    END SELECT
+END SUB
