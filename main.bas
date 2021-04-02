@@ -25,7 +25,7 @@ REDIM SHARED internal AS internal
 TYPE global
     AS STRING nodepath, internalpath, license, scheme
     AS _UNSIGNED _INTEGER64 maxnodeid, matchthreshhold
-    AS _FLOAT margin, padding, round, stroke
+    AS _FLOAT margin, padding, round, windowsize, sliderwidth
     AS _BYTE licensestatus, exactsearch, actionlock
 END TYPE
 REDIM SHARED global AS global
@@ -86,8 +86,8 @@ resetallvalues
 REDIM SHARED AS INTEGER screenresx, screenresy, winresx, winresy
 screenresx = _DESKTOPWIDTH
 screenresy = _DESKTOPHEIGHT
-winresx = screenresx * 0.5 'to be replaced with config-based factor
-winresy = screenresy * 0.5
+winresx = screenresx * global.windowsize 'to be replaced with config-based factor
+winresy = screenresy * global.windowsize
 SCREEN _NEWIMAGE(winresx, winresy, 32)
 _SCREENMOVE (screenresx / 2) - (winresx / 2), (screenresy / 2) - (winresy / 2)
 _SCREENSHOW
@@ -124,6 +124,9 @@ END SUB
 SUB setwindow (winresx AS INTEGER, winresy AS INTEGER)
     SCREEN _NEWIMAGE(winresx, winresy, 32)
     DO: LOOP UNTIL _SCREENEXISTS
+    screenresx = _DESKTOPWIDTH
+    screenresy = _DESKTOPHEIGHT
+    _SCREENMOVE (screenresx / 2) - (winresx / 2), (screenresy / 2) - (winresy / 2)
 END SUB
 
 SUB checkmouse
@@ -222,6 +225,7 @@ SUB expandelement (this AS element, elementindex AS INTEGER)
     optionspadding = 6
     lineheight = _FONTHEIGHT(font_normal) + optionspadding
     coord.h = originalheight + (lineheight * (UBOUND(options))) + optionspadding
+    LINE (coord.x, coord.y + lineheight + (2 * global.padding))-(coord.x + coord.w, coord.y + coord.h), col&("bg1"), BF
     rectangle "x=" + lst$(coord.x) + ";y=" + lst$(coord.y) + ";w=" + lst$(coord.w) + ";h=" + lst$(originalheight) + ";style=" + this.style + ";angle=" + this.angle + ";round=" + this.round, this.drawcolor
     DO: index = index + 1
         DIM itemcoord AS rectangle
@@ -230,30 +234,16 @@ SUB expandelement (this AS element, elementindex AS INTEGER)
         itemcoord.w = coord.w
         itemcoord.h = lineheight
         IF mouseinbounds(itemcoord) THEN
-            IF mouse.left THEN this.buffer = options(index): setglobal this.name, this.buffer
+            IF mouse.left THEN setglobal this.name, options(index)
             COLOR col&("active"), col&("t")
-            LINE (itemcoord.x + 2, itemcoord.y + 2)-(itemcoord.x + itemcoord.w - 2, itemcoord.y + itemcoord.h - 2), col&("bg2"), BF
+            LINE (itemcoord.x + 1, itemcoord.y + 1)-(itemcoord.x + itemcoord.w - 1, itemcoord.y + itemcoord.h - 1), col&("bg2"), BF
         ELSE
             COLOR col&("ui"), col&("t")
-            LINE (itemcoord.x + 2, itemcoord.y + 2)-(itemcoord.x + itemcoord.w - 2, itemcoord.y + itemcoord.h - 2), col&("bg1"), BF
+            LINE (itemcoord.x + 1, itemcoord.y + 1)-(itemcoord.x + itemcoord.w - 1, itemcoord.y + itemcoord.h - 1), col&("bg1"), BF
         END IF
         _PRINTSTRING (itemcoord.x + (2 * global.padding), itemcoord.y + global.padding), options(index)
     LOOP UNTIL index = UBOUND(options)
     rectangle "x=" + lst$(coord.x) + ";y=" + lst$(coord.y) + ";w=" + lst$(coord.w) + ";h=" + lst$(coord.h) + ";style=B;angle=" + this.angle + ";round=" + this.round, this.drawcolor
-END SUB
-
-SUB setglobal (globalname AS STRING, value AS STRING)
-    SELECT CASE globalname
-        CASE "colorscheme"
-            global.scheme = value
-        CASE "exactsearch"
-            global.exactsearch = VAL(value)
-        CASE "license"
-            global.license = value
-        CASE ELSE: EXIT SUB
-    END SELECT
-    saveconfig
-    loadconfig
 END SUB
 
 SUB getoptionsarray (array() AS STRING, this AS element)
@@ -330,9 +320,15 @@ SUB getcontextarray (array() AS STRING, this AS element)
     IF textselectable(this) THEN addtostringarray array(), "Copy"
     IF typable(this) THEN addtostringarray array(), "Paste"
     IF this.action <> "" THEN addtostringarray array(), "Activate"
+    IF toggleable(this) THEN addtostringarray array(), "Toggle"
+    IF expandable(this) THEN addtostringarray array(), "Expand"
     IF typable(this) THEN addtostringarray array(), "UPPERCASE"
     IF typable(this) THEN addtostringarray array(), "lowercase"
 END SUB
+
+FUNCTION toggleable (this AS element)
+    IF this.type = "checkbox" OR this.type = "radiobutton" THEN toggleable = -1 ELSE toggleable = 0
+END FUNCTION
 
 SUB addtostringarray (array() AS STRING, toadd AS STRING)
     REDIM _PRESERVE array(UBOUND(array) + 1) AS STRING
@@ -438,6 +434,7 @@ FUNCTION getexceptionvalue$ (elementname AS STRING)
 END FUNCTION
 
 SUB drawelement (this AS element, elementindex AS INTEGER, coord AS rectangle, invoke AS invoke)
+    checkglobal this
     _FONT font_normal
     SELECT CASE this.type
         CASE "button"
@@ -456,13 +453,16 @@ SUB drawelement (this AS element, elementindex AS INTEGER, coord AS rectangle, i
             COLOR this.drawcolor, col&("t")
             _PRINTSTRING (coord.x, coord.y), this.text + " " + this.buffer
         CASE "text"
+            coord.y = coord.y + global.padding
             COLOR this.drawcolor, col&("t")
             _PRINTSTRING (coord.x, coord.y), this.text + " " + this.buffer
         CASE "time"
+            coord.y = coord.y + global.padding
             COLOR this.drawcolor, col&("t")
             this.buffer = TIME$
             _PRINTSTRING (coord.x, coord.y), this.text + " " + this.buffer
         CASE "date"
+            coord.y = coord.y + global.padding
             COLOR this.drawcolor, col&("t")
             this.buffer = DATE$
             _PRINTSTRING (coord.x, coord.y), this.text + " " + this.buffer
@@ -479,6 +479,7 @@ SUB drawelement (this AS element, elementindex AS INTEGER, coord AS rectangle, i
             boxsize = _FONTHEIGHT(font_normal) * 0.75
             boxoffset = 0
             coord.w = coord.w + boxsize + global.margin
+            coord.y = coord.y + global.padding
             IF this.state = -1 THEN this.style = "bf" ELSE this.style = "b"
             rectangle "x=" + lst$(coord.x) + ";y=" + lst$(coord.y + boxoffset) + ";w=" + lst$(boxsize) + ";h=" + lst$(boxsize) + ";style=" + this.style + ";round=0", this.drawcolor
             COLOR this.drawcolor, col&("t")
@@ -506,7 +507,18 @@ SUB drawelement (this AS element, elementindex AS INTEGER, coord AS rectangle, i
                 COLOR this.drawcolor, col&("t")
             END IF
             _PRINTSTRING (coord.x, coord.y), this.text + " " + this.buffer
-
+        CASE "slider"
+            coord.y = coord.y + global.padding
+            COLOR this.drawcolor, col&("t")
+            _PRINTSTRING (coord.x, coord.y), this.text + " " + this.buffer
+            textwidth = LEN(this.text + " " + this.buffer) * _FONTWIDTH(font_normal) + global.margin
+            val_start = coord.x + textwidth
+            val_end = coord.x + textwidth + global.sliderwidth
+            cy = coord.y + (_FONTHEIGHT(font_normal) / 2)
+            circlesize = (_FONTHEIGHT(font_normal) * 0.75) * 0.5
+            CIRCLE (val_start + (this.value * (val_end - val_start)), cy), circlesize, this.drawcolor, BF
+            PAINT (val_start + (this.value * (val_end - val_start)), cy), this.drawcolor, this.drawcolor
+            LINE (val_start, cy)-(val_end, cy + 1), this.drawcolor, BF
         CASE "list"
             coord.x = coord.x + (2 * global.padding)
             coord.y = coord.y + global.padding
@@ -638,6 +650,10 @@ FUNCTION textselectable (this AS element)
     IF this.type = "input" OR this.type = "text" OR this.type = "time" OR this.type = "date" THEN textselectable = -1 ELSE textselectable = 0
 END FUNCTION
 
+FUNCTION expandable (this AS element)
+    IF this.type = "dropdown" THEN expandable = -1 ELSE expandable = 0
+END FUNCTION
+
 FUNCTION longselection (this AS element)
     IF this.sel_start > 0 AND this.sel_end > 0 AND (this.sel_start <> this.sel_end) THEN longselection = -1 ELSE longselection = 0
 END FUNCTION
@@ -701,25 +717,27 @@ SUB elementmousehandling (this AS element, elementindex AS INTEGER, invoke AS in
                 DO: m = _MOUSEINPUT: LOOP UNTIL _MOUSEBUTTON(1) = 0
             END IF
         ELSE
-            IF mouse.left AND this.action <> "" THEN
-                dothis "action=" + this.action + ";" + getcurrentinputvalues$(-1)
-            ELSEIF mouse.left AND this.type = "checkbox" AND this.statelock = 0 THEN
-                IF this.state = 0 THEN this.state = -1 ELSE this.state = 0
-                setglobal this.name, lst$(this.state)
-                this.statelock = -1
-            ELSEIF mouse.left AND this.type = "radiobutton" THEN
-                this.state = -1
-                e = 0: DO: e = e + 1
-                    IF elements(e).group = this.group AND elements(e).view = currentview AND elements(e).type = "radiobutton" AND e <> elementindex THEN
-                        elements(e).state = 0
+            IF mouse.left THEN
+                IF this.action <> "" THEN
+                    uicall "activate", this, elementindex
+                ELSEIF toggleable(this) THEN
+                    uicall "toggle", this, elementindex
+                ELSEIF this.action = "" AND NOT active(elementindex) AND textselectable(this) THEN
+                    activeelement = elementindex
+                    this.sel_start = 0: this.sel_end = 0
+                ELSEIF expandable(this) AND this.statelock = 0 THEN
+                    uicall "expand", this, elementindex
+                ELSEIF this.type = "slider" THEN
+                    textwidth = LEN(this.text + " " + this.buffer) * _FONTWIDTH(font_normal) + global.margin
+                    val_start = coord.x + textwidth
+                    val_end = coord.x + textwidth + global.sliderwidth
+                    IF mouse.x > val_start AND mouse.x < val_end THEN
+                        factor = (mouse.x - val_start) / (val_end - val_start)
+                        this.value = factor
+                        this.buffer = MID$(lst$(factor), 1, 4)
+                        setglobal this.name, lst$(this.value)
                     END IF
-                LOOP UNTIL e = UBOUND(elements)
-            ELSEIF mouse.left AND this.action = "" AND NOT active(elementindex) AND textselectable(this) THEN
-                activeelement = elementindex
-                this.sel_start = 0: this.sel_end = 0
-            ELSEIF mouse.left AND this.type = "dropdown" AND this.statelock = 0 THEN
-                IF this.expand = -1 THEN this.expand = 0 ELSE this.expand = -1
-                this.statelock = -1
+                END IF
             END IF
 
             IF mouse.scroll THEN
@@ -780,6 +798,8 @@ END FUNCTION
 SUB uicall (func AS STRING, this AS element, elementindex AS INTEGER)
     IF NOT lockuicall THEN
         SELECT CASE func
+            CASE "activate"
+                dothis "action=" + this.action + ";" + getcurrentinputvalues$(-1)
             CASE "select all"
                 this.sel_start = 1: this.sel_end = LEN(this.buffer)
             CASE "paste"
@@ -793,12 +813,15 @@ SUB uicall (func AS STRING, this AS element, elementindex AS INTEGER)
                 IF longselection(this) THEN
                     copy this.buffer, this.sel_start, this.sel_end
                 ELSE
-                    _CLIPBOARD$ = this.buffer
+                    IF this.buffer = "" THEN _CLIPBOARD$ = this.text ELSE _CLIPBOARD$ = this.buffer
                 END IF
             CASE "search"
                 IF this.name = "commandline" THEN addtohistory this, elementindex: this.buffer = "nodetarget=": this.cursor = LEN(this.buffer)
             CASE "revert"
                 IF elementindex = history(UBOUND(history)).element THEN gobackintime this
+            CASE "expand"
+                IF this.expand = -1 THEN this.expand = 0 ELSE this.expand = -1
+                this.statelock = -1
             CASE "uppercase"
                 addtohistory this, elementindex
                 IF longselection(this) THEN
@@ -816,6 +839,19 @@ SUB uicall (func AS STRING, this AS element, elementindex AS INTEGER)
                     this.buffer = MID$(this.buffer, 1, minc - 1) + LCASE$(MID$(this.buffer, minc, maxc - minc + 1)) + MID$(this.buffer, maxc + 1, LEN(this.buffer))
                 ELSE
                     this.buffer = LCASE$(this.buffer)
+                END IF
+            CASE "toggle"
+                IF this.type = "radiobutton" THEN
+                    this.state = -1
+                    e = 0: DO: e = e + 1
+                        IF elements(e).group = this.group AND elements(e).view = currentview AND elements(e).type = "radiobutton" AND e <> elementindex THEN
+                            elements(e).state = 0
+                        END IF
+                    LOOP UNTIL e = UBOUND(elements)
+                ELSEIF this.type = "checkbox" AND this.statelock = 0 THEN
+                    IF this.state = 0 THEN this.state = -1 ELSE this.state = 0
+                    setglobal this.name, lst$(this.state)
+                    this.statelock = -1
                 END IF
             CASE "add node"
                 IF this.name = "commandline" THEN addtohistory this, elementindex: this.buffer = "action=add.node;nodetarget=": this.cursor = LEN(this.buffer)
@@ -1103,7 +1139,11 @@ END FUNCTION
 
 FUNCTION getewidth$ (e AS INTEGER)
     IF elements(e).w = "flex" OR elements(e).w = "f" THEN 'you would normally want this one for text-based elements
-        getewidth$ = lst$(VAL(elements(e).w) + (_FONTWIDTH * (LEN(elements(e).text) + 2 + LEN(elements(e).buffer))) + (2 * global.padding))
+        IF elements(e).type = "slider" THEN
+            getewidth$ = lst$(VAL(elements(e).w) + (_FONTWIDTH * (LEN(elements(e).text) + 2 + LEN(elements(e).buffer))) + (2 * global.padding) + global.margin + global.sliderwidth)
+        ELSE
+            getewidth$ = lst$(VAL(elements(e).w) + (_FONTWIDTH * (LEN(elements(e).text) + 2 + LEN(elements(e).buffer))) + (2 * global.padding))
+        END IF
     ELSEIF elements(e).w = "full" THEN
         getewidth$ = lst$(_WIDTH(0) - VAL(getexpos$(e)) - global.margin)
     ELSE
@@ -1130,7 +1170,7 @@ FUNCTION getepadding$ (e AS INTEGER)
     END IF
 END FUNCTION
 
-SUB dothis (arguments AS STRING)
+SUB dothis (arguments AS STRING) 'program-specific actions
     IF global.actionlock THEN
         EXIT SUB
     ELSE
@@ -1191,6 +1231,10 @@ SUB dothis (arguments AS STRING)
             loadconfig
         CASE "saveconfig"
             saveconfig
+            loadconfig
+        CASE "resetconfig"
+            resetconfig
+            loadconfig
         CASE "quit"
             SYSTEM
     END SELECT
@@ -1247,11 +1291,53 @@ SUB writenode (arguments AS STRING, this AS node)
 END SUB
 
 SUB remove.node (arguments AS STRING)
+    DIM AS STRING nodearray(0), linkarray(0), nodename
+    nodename = getargument$(arguments, "target")
+    getnodearray nodearray(), nodename
+    IF UBOUND(nodearray) > 0 THEN
+        nodefile = 0: DO: nodefile = nodefile + 1
+            REDIM _PRESERVE linkarray(0) AS STRING
+            getlinkarray linkarray(), nodearray(nodefile)
+            IF UBOUND(linkarray) > 0 THEN
+                link = 0: DO: link = link + 1
+                    IF getargument$(linkarray(link), "nodetarget") = nodename THEN resavenodewithout linkarray(link), nodearray(nodefile)
+                LOOP UNTIL link = UBOUND(linkarray)
+            END IF
+        LOOP UNTIL nodefile = UBOUND(nodearray)
+    END IF
 
-    file$ = path$(getargument$(arguments, "target"))
+    file$ = path$(nodename)
     IF _FILEEXISTS(file$) THEN
         KILL file$
     END IF
+END SUB
+
+SUB resavenodewithout (leaveout AS STRING, nodename AS STRING)
+    file$ = path$(nodename)
+    DIM filedata(0) AS STRING
+    getfilearray filedata(), file$
+    writefilearray filedata(), file$, leaveout
+END SUB
+
+SUB getfilearray (array() AS STRING, file AS STRING)
+    IF _FILEEXISTS(file) = 0 THEN EXIT SUB
+    freen = FREEFILE
+    OPEN file FOR INPUT AS #freen
+    IF EOF(freen) THEN CLOSE #freen: EXIT SUB
+    DO
+        INPUT #freen, filedata$
+        addtostringarray array(), filedata$
+    LOOP UNTIL EOF(freen)
+    CLOSE #freen
+END SUB
+
+SUB writefilearray (array() AS STRING, file AS STRING, exclude AS STRING)
+    freen = FREEFILE
+    OPEN file FOR OUTPUT AS #freen
+    DO: index = index + 1
+        IF array(index) <> exclude THEN PRINT #freen, array(index)
+    LOOP UNTIL index = UBOUND(array)
+    CLOSE #freen
 END SUB
 
 SUB remove.nodelink (arguments AS STRING)
@@ -1329,10 +1415,12 @@ END SUB
 
 SUB writenodelink (arguments AS STRING, this AS nodelink) 'writes a nodelink to a given node
     file$ = path$(this.origin)
-    filen = FREEFILE
-    OPEN file$ FOR OUTPUT AS #filen
-    WRITE #filen, "link:date=" + this.date + ";time=" + this.time + ";origin=" + this.origin + ";name=" + this.name + ";target=" + this.target
-    CLOSE #filen
+    IF _FILEEXISTS(file$) THEN
+        filen = FREEFILE
+        OPEN file$ FOR APPEND AS #filen
+        WRITE #filen, "link:date=" + this.date + ";time=" + this.time + ";origin=" + this.origin + ";name=" + this.name + ";target=" + this.target
+        CLOSE #filen
+    END IF
 END SUB
 
 SUB loadconfig
@@ -1351,19 +1439,29 @@ SUB loadconfig
     global.padding = getargumentv(config$, "padding")
     global.margin = getargumentv(config$, "margin")
     global.round = getargumentv(config$, "round")
-    global.stroke = getargumentv(config$, "stroke")
     global.license = getargument$(config$, "license")
     global.exactsearch = getargumentv(config$, "exactsearch")
     global.scheme = getargument$(config$, "colorscheme")
     global.matchthreshhold = getargumentv(config$, "matchthreshhold")
+    global.windowsize = getargumentv(config$, "windowsize")
     loadcolors global.scheme
     IF checkLicense(_INFLATE$(global.license)) = 0 THEN setlicense "", 0: saveconfig
     IF global.license <> "" THEN global.licensestatus = -1
+    setwindow _DESKTOPWIDTH * global.windowsize, _DESKTOPHEIGHT * global.windowsize
+END SUB
+
+SUB resetconfig
+    config$ = "round=3;margin=10;padding=6;license=;colorscheme=teal;matchthreshhold=2;exactsearch=-1;windowsize=.5"
+    configfile$ = global.internalpath + "\config.dst"
+    freen = FREEFILE
+    OPEN configfile$ FOR OUTPUT AS #freen
+    PRINT #freen, config$
+    CLOSE #freen
 END SUB
 
 SUB saveconfig
-    config$ = "round=" + lst$(global.round) + ";margin=" + lst$(global.margin) + ";padding=" + lst$(global.padding) + ";stroke=" + lst$(global.stroke) + ";license=" + global.license
-    config$ = config$ + ";colorscheme=" + global.scheme + ";matchthreshhold=" + lst$(global.matchthreshhold) + ";exactsearch=" + lst$(global.exactsearch)
+    config$ = "round=" + lst$(global.round) + ";margin=" + lst$(global.margin) + ";padding=" + lst$(global.padding) + ";license=" + global.license
+    config$ = config$ + ";colorscheme=" + global.scheme + ";matchthreshhold=" + lst$(global.matchthreshhold) + ";exactsearch=" + lst$(global.exactsearch) + ";windowsize=" + lst$(global.windowsize)
     configfile$ = global.internalpath + "\config.dst"
     freen = FREEFILE
     OPEN configfile$ FOR OUTPUT AS #freen
@@ -1463,12 +1561,29 @@ END SUB
 
 SUB checkglobal (this AS element)
     SELECT CASE this.name
-        CASE "schemecolor"
+        CASE "colorscheme"
             this.buffer = global.scheme
         CASE "exactsearch"
             this.state = global.exactsearch
         CASE "license"
             this.buffer = global.license
+        CASE "windowsize"
+            this.value = global.windowsize
+            this.buffer = MID$(lst$(this.value), 1, 4)
+    END SELECT
+END SUB
+
+SUB setglobal (globalname AS STRING, value AS STRING)
+    SELECT CASE globalname
+        CASE "colorscheme"
+            global.scheme = value
+        CASE "exactsearch"
+            global.exactsearch = VAL(value)
+        CASE "license"
+            global.license = value
+        CASE "windowsize"
+            global.windowsize = VAL(value)
+        CASE ELSE: EXIT SUB
     END SELECT
 END SUB
 
@@ -1481,6 +1596,7 @@ SUB resetallvalues
     'data structure
     global.internalpath = "internal"
     global.nodepath = "nodes"
+    global.sliderwidth = 200
     proofpath global.internalpath
     proofpath global.nodepath
     getmaxnodeid
@@ -1599,7 +1715,6 @@ SUB drawshape (arguments AS STRING, clr AS LONG)
     w = getargumentv(arguments, "w")
     h = getargumentv(arguments, "h")
     thickness = getargumentv(arguments, "thickness")
-    IF thickness = 0 THEN thickness = global.stroke
     SELECT CASE getargument$(arguments, "shape")
         CASE "+"
             LINE (x + (w / 2) - (thickness / 2), y)-(x + (w / 2) + (thickness / 2), y + h), clr, BF
