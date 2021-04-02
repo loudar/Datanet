@@ -25,7 +25,7 @@ REDIM SHARED internal AS internal
 TYPE global
     AS STRING nodepath, internalpath, license, scheme
     AS _UNSIGNED _INTEGER64 maxnodeid, matchthreshhold
-    AS _FLOAT margin, padding, round, stroke
+    AS _FLOAT margin, padding, round
     AS _BYTE licensestatus, exactsearch, actionlock
 END TYPE
 REDIM SHARED global AS global
@@ -230,7 +230,7 @@ SUB expandelement (this AS element, elementindex AS INTEGER)
         itemcoord.w = coord.w
         itemcoord.h = lineheight
         IF mouseinbounds(itemcoord) THEN
-            IF mouse.left THEN this.buffer = options(index): setglobal this.name, this.buffer
+            IF mouse.left THEN setglobal this.name, options(index)
             COLOR col&("active"), col&("t")
             LINE (itemcoord.x + 2, itemcoord.y + 2)-(itemcoord.x + itemcoord.w - 2, itemcoord.y + itemcoord.h - 2), col&("bg2"), BF
         ELSE
@@ -240,20 +240,6 @@ SUB expandelement (this AS element, elementindex AS INTEGER)
         _PRINTSTRING (itemcoord.x + (2 * global.padding), itemcoord.y + global.padding), options(index)
     LOOP UNTIL index = UBOUND(options)
     rectangle "x=" + lst$(coord.x) + ";y=" + lst$(coord.y) + ";w=" + lst$(coord.w) + ";h=" + lst$(coord.h) + ";style=B;angle=" + this.angle + ";round=" + this.round, this.drawcolor
-END SUB
-
-SUB setglobal (globalname AS STRING, value AS STRING)
-    SELECT CASE globalname
-        CASE "colorscheme"
-            global.scheme = value
-        CASE "exactsearch"
-            global.exactsearch = VAL(value)
-        CASE "license"
-            global.license = value
-        CASE ELSE: EXIT SUB
-    END SELECT
-    saveconfig
-    loadconfig
 END SUB
 
 SUB getoptionsarray (array() AS STRING, this AS element)
@@ -330,9 +316,14 @@ SUB getcontextarray (array() AS STRING, this AS element)
     IF textselectable(this) THEN addtostringarray array(), "Copy"
     IF typable(this) THEN addtostringarray array(), "Paste"
     IF this.action <> "" THEN addtostringarray array(), "Activate"
+    IF toggleable(this) THEN addtostringarray array(), "Toggle"
     IF typable(this) THEN addtostringarray array(), "UPPERCASE"
     IF typable(this) THEN addtostringarray array(), "lowercase"
 END SUB
+
+FUNCTION toggleable (this AS element)
+    IF this.type = "checkbox" OR this.type = "radiobutton" THEN toggleable = -1 ELSE toggleable = 0
+END FUNCTION
 
 SUB addtostringarray (array() AS STRING, toadd AS STRING)
     REDIM _PRESERVE array(UBOUND(array) + 1) AS STRING
@@ -438,6 +429,7 @@ FUNCTION getexceptionvalue$ (elementname AS STRING)
 END FUNCTION
 
 SUB drawelement (this AS element, elementindex AS INTEGER, coord AS rectangle, invoke AS invoke)
+    checkglobal this
     _FONT font_normal
     SELECT CASE this.type
         CASE "button"
@@ -506,7 +498,6 @@ SUB drawelement (this AS element, elementindex AS INTEGER, coord AS rectangle, i
                 COLOR this.drawcolor, col&("t")
             END IF
             _PRINTSTRING (coord.x, coord.y), this.text + " " + this.buffer
-
         CASE "list"
             coord.x = coord.x + (2 * global.padding)
             coord.y = coord.y + global.padding
@@ -702,18 +693,11 @@ SUB elementmousehandling (this AS element, elementindex AS INTEGER, invoke AS in
             END IF
         ELSE
             IF mouse.left AND this.action <> "" THEN
-                dothis "action=" + this.action + ";" + getcurrentinputvalues$(-1)
+                uicall "activate", this, elementindex
             ELSEIF mouse.left AND this.type = "checkbox" AND this.statelock = 0 THEN
-                IF this.state = 0 THEN this.state = -1 ELSE this.state = 0
-                setglobal this.name, lst$(this.state)
-                this.statelock = -1
+                uicall "toggle", this, elementindex
             ELSEIF mouse.left AND this.type = "radiobutton" THEN
-                this.state = -1
-                e = 0: DO: e = e + 1
-                    IF elements(e).group = this.group AND elements(e).view = currentview AND elements(e).type = "radiobutton" AND e <> elementindex THEN
-                        elements(e).state = 0
-                    END IF
-                LOOP UNTIL e = UBOUND(elements)
+                uicall "toggle", this, elementindex
             ELSEIF mouse.left AND this.action = "" AND NOT active(elementindex) AND textselectable(this) THEN
                 activeelement = elementindex
                 this.sel_start = 0: this.sel_end = 0
@@ -780,6 +764,8 @@ END FUNCTION
 SUB uicall (func AS STRING, this AS element, elementindex AS INTEGER)
     IF NOT lockuicall THEN
         SELECT CASE func
+            CASE "activate"
+                dothis "action=" + this.action + ";" + getcurrentinputvalues$(-1)
             CASE "select all"
                 this.sel_start = 1: this.sel_end = LEN(this.buffer)
             CASE "paste"
@@ -793,7 +779,7 @@ SUB uicall (func AS STRING, this AS element, elementindex AS INTEGER)
                 IF longselection(this) THEN
                     copy this.buffer, this.sel_start, this.sel_end
                 ELSE
-                    _CLIPBOARD$ = this.buffer
+                    IF this.buffer = "" THEN _CLIPBOARD$ = this.text ELSE _CLIPBOARD$ = this.buffer
                 END IF
             CASE "search"
                 IF this.name = "commandline" THEN addtohistory this, elementindex: this.buffer = "nodetarget=": this.cursor = LEN(this.buffer)
@@ -816,6 +802,19 @@ SUB uicall (func AS STRING, this AS element, elementindex AS INTEGER)
                     this.buffer = MID$(this.buffer, 1, minc - 1) + LCASE$(MID$(this.buffer, minc, maxc - minc + 1)) + MID$(this.buffer, maxc + 1, LEN(this.buffer))
                 ELSE
                     this.buffer = LCASE$(this.buffer)
+                END IF
+            CASE "toggle"
+                IF this.type = "radiobutton" THEN
+                    this.state = -1
+                    e = 0: DO: e = e + 1
+                        IF elements(e).group = this.group AND elements(e).view = currentview AND elements(e).type = "radiobutton" AND e <> elementindex THEN
+                            elements(e).state = 0
+                        END IF
+                    LOOP UNTIL e = UBOUND(elements)
+                ELSEIF this.type = "checkbox" THEN
+                    IF this.state = 0 THEN this.state = -1 ELSE this.state = 0
+                    setglobal this.name, lst$(this.state)
+                    this.statelock = -1
                 END IF
             CASE "add node"
                 IF this.name = "commandline" THEN addtohistory this, elementindex: this.buffer = "action=add.node;nodetarget=": this.cursor = LEN(this.buffer)
@@ -1247,11 +1246,53 @@ SUB writenode (arguments AS STRING, this AS node)
 END SUB
 
 SUB remove.node (arguments AS STRING)
+    DIM AS STRING nodearray(0), linkarray(0), nodename
+    nodename = getargument$(arguments, "target")
+    getnodearray nodearray(), nodename
+    IF UBOUND(nodearray) > 0 THEN
+        nodefile = 0: DO: nodefile = nodefile + 1
+            REDIM _PRESERVE linkarray(0) AS STRING
+            getlinkarray linkarray(), nodearray(nodefile)
+            IF UBOUND(linkarray) > 0 THEN
+                link = 0: DO: link = link + 1
+                    IF getargument$(linkarray(link), "nodetarget") = nodename THEN resavenodewithout linkarray(link), nodearray(nodefile)
+                LOOP UNTIL link = UBOUND(linkarray)
+            END IF
+        LOOP UNTIL nodefile = UBOUND(nodearray)
+    END IF
 
-    file$ = path$(getargument$(arguments, "target"))
+    file$ = path$(nodename)
     IF _FILEEXISTS(file$) THEN
         KILL file$
     END IF
+END SUB
+
+SUB resavenodewithout (leaveout AS STRING, nodename AS STRING)
+    file$ = path$(nodename)
+    DIM filedata(0) AS STRING
+    getfilearray filedata(), file$
+    writefilearray filedata(), file$, leaveout
+END SUB
+
+SUB getfilearray (array() AS STRING, file AS STRING)
+    IF _FILEEXISTS(file) = 0 THEN EXIT SUB
+    freen = FREEFILE
+    OPEN file FOR INPUT AS #freen
+    IF EOF(freen) THEN CLOSE #freen: EXIT SUB
+    DO
+        INPUT #freen, filedata$
+        addtostringarray array(), filedata$
+    LOOP UNTIL EOF(freen)
+    CLOSE #freen
+END SUB
+
+SUB writefilearray (array() AS STRING, file AS STRING, exclude AS STRING)
+    freen = FREEFILE
+    OPEN file FOR OUTPUT AS #freen
+    DO: index = index + 1
+        IF array(index) <> exclude THEN PRINT #freen, array(index)
+    LOOP UNTIL index = UBOUND(array)
+    CLOSE #freen
 END SUB
 
 SUB remove.nodelink (arguments AS STRING)
@@ -1329,10 +1370,12 @@ END SUB
 
 SUB writenodelink (arguments AS STRING, this AS nodelink) 'writes a nodelink to a given node
     file$ = path$(this.origin)
-    filen = FREEFILE
-    OPEN file$ FOR OUTPUT AS #filen
-    WRITE #filen, "link:date=" + this.date + ";time=" + this.time + ";origin=" + this.origin + ";name=" + this.name + ";target=" + this.target
-    CLOSE #filen
+    IF _FILEEXISTS(file$) THEN
+        filen = FREEFILE
+        OPEN file$ FOR APPEND AS #filen
+        WRITE #filen, "link:date=" + this.date + ";time=" + this.time + ";origin=" + this.origin + ";name=" + this.name + ";target=" + this.target
+        CLOSE #filen
+    END IF
 END SUB
 
 SUB loadconfig
@@ -1351,7 +1394,6 @@ SUB loadconfig
     global.padding = getargumentv(config$, "padding")
     global.margin = getargumentv(config$, "margin")
     global.round = getargumentv(config$, "round")
-    global.stroke = getargumentv(config$, "stroke")
     global.license = getargument$(config$, "license")
     global.exactsearch = getargumentv(config$, "exactsearch")
     global.scheme = getargument$(config$, "colorscheme")
@@ -1362,7 +1404,7 @@ SUB loadconfig
 END SUB
 
 SUB saveconfig
-    config$ = "round=" + lst$(global.round) + ";margin=" + lst$(global.margin) + ";padding=" + lst$(global.padding) + ";stroke=" + lst$(global.stroke) + ";license=" + global.license
+    config$ = "round=" + lst$(global.round) + ";margin=" + lst$(global.margin) + ";padding=" + lst$(global.padding) + ";license=" + global.license
     config$ = config$ + ";colorscheme=" + global.scheme + ";matchthreshhold=" + lst$(global.matchthreshhold) + ";exactsearch=" + lst$(global.exactsearch)
     configfile$ = global.internalpath + "\config.dst"
     freen = FREEFILE
@@ -1463,13 +1505,27 @@ END SUB
 
 SUB checkglobal (this AS element)
     SELECT CASE this.name
-        CASE "schemecolor"
+        CASE "colorscheme"
             this.buffer = global.scheme
         CASE "exactsearch"
             this.state = global.exactsearch
         CASE "license"
             this.buffer = global.license
     END SELECT
+END SUB
+
+SUB setglobal (globalname AS STRING, value AS STRING)
+    SELECT CASE globalname
+        CASE "colorscheme"
+            global.scheme = value
+        CASE "exactsearch"
+            global.exactsearch = VAL(value)
+        CASE "license"
+            global.license = value
+        CASE ELSE: EXIT SUB
+    END SELECT
+    saveconfig
+    loadconfig
 END SUB
 
 SUB resetallvalues
@@ -1599,7 +1655,6 @@ SUB drawshape (arguments AS STRING, clr AS LONG)
     w = getargumentv(arguments, "w")
     h = getargumentv(arguments, "h")
     thickness = getargumentv(arguments, "thickness")
-    IF thickness = 0 THEN thickness = global.stroke
     SELECT CASE getargument$(arguments, "shape")
         CASE "+"
             LINE (x + (w / 2) - (thickness / 2), y)-(x + (w / 2) + (thickness / 2), y + h), clr, BF
