@@ -65,7 +65,7 @@ TYPE invoke
 END TYPE
 REDIM SHARED AS LONG font_normal, font_big
 REDIM SHARED AS INTEGER elementlock, activeelement
-REDIM SHARED AS _BYTE contextopen, lockuicall
+REDIM SHARED AS _BYTE contextopen, lockuicall, lockmouse, expanded
 TYPE history
     element AS INTEGER
     state AS element
@@ -160,6 +160,7 @@ SUB checkmouse
         ELSE
             mouse.leftrelease = -1
             global.actionlock = 0
+            lockmouse = 0
         END IF
         mouse.right = _MOUSEBUTTON(2)
         IF mouse.right THEN
@@ -249,8 +250,8 @@ SUB expandelement (this AS element, elementindex AS INTEGER)
         itemcoord.w = coord.w
         itemcoord.h = lineheight
         IF mouseinbounds(itemcoord) THEN
-            IF mouse.left THEN setglobal this.name, options(index)
-            COLOR col&("active"), col&("t")
+            IF mouse.left THEN setglobal this.name, options(index): lockmouse = -1
+            COLOR col&("seltext"), col&("t")
             LINE (itemcoord.x + 1, itemcoord.y + 1)-(itemcoord.x + itemcoord.w - 1, itemcoord.y + itemcoord.h - 1), col&("bg2"), BF
         ELSE
             COLOR col&("ui"), col&("t")
@@ -321,7 +322,7 @@ SUB displaycontext (this AS element, elementindex AS INTEGER)
 
         IF mouseinbounds(entrycoord) AND contextdata(contextentry) <> "" THEN
             IF mouse.left THEN uicall LCASE$(contextdata(contextentry)), this, elmentindex: lockuicall = -1 ELSE lockuicall = 0
-            COLOR col&("active"), col&("t")
+            COLOR col&("seltext"), col&("t")
             LINE (entrycoord.x + 1, entrycoord.y + 1)-(entrycoord.x + entrycoord.w - 1, entrycoord.y + entrycoord.h - 1), col&("bg2"), BF
         ELSE
             COLOR col&("ui"), col&("t")
@@ -546,9 +547,9 @@ SUB drawelement (this AS element, elementindex AS INTEGER, coord AS rectangle, i
         CASE "nodegraph"
             searchnode$ = elements(gettitleid).text
             DIM AS STRING linkarray(0)
-            getlinkarray linkarray(), searchnode$
+            getcombinedlinkarray linkarray(), searchnode$
             DIM AS countlist linkcount(0)
-            getlinkcounts linkcount(), linkarray(), "target"
+            getlinkcounts linkcount(), linkarray(), searchnode$
 
             scrolllimit = INT((coord.h / 2) / 25)
             IF this.scroll > scrolllimit THEN this.scroll = scrolllimit
@@ -557,6 +558,11 @@ SUB drawelement (this AS element, elementindex AS INTEGER, coord AS rectangle, i
             nodesize = 10
             centerx = coord.x + (coord.w / 2) + this.offsetx
             centery = coord.y + (coord.h / 2) + this.offsety
+
+            'DO: i = i + 1
+            '    _PRINTSTRING (centerx + nodesize, centery + ((i - 1) * _FONTHEIGHT(font_normal))), linkarray(i)
+            'LOOP UNTIL i = UBOUND(linkarray)
+
             IF UBOUND(linkcount) > 0 THEN
                 node = 0: DO: node = node + 1
                     changex = SIN((node - 1) * (_PI / 4)) * distance
@@ -571,10 +577,17 @@ SUB drawelement (this AS element, elementindex AS INTEGER, coord AS rectangle, i
                     nodecoord.h = nodesize
 
                     IF nodecoord.x > coord.x AND nodecoord.x + nodecoord.w < coord.x + coord.w AND nodecoord.y > coord.y AND nodecoord.y + nodecoord.h < coord.y + coord.h THEN
+                        DIM nodehitbox AS rectangle
+                        hitboxmargin = 5
+                        nodehitbox.x = nodecoord.x - hitboxmargin
+                        nodehitbox.y = nodecoord.y - hitboxmargin
+                        nodehitbox.w = nodesize + hitboxmargin + ((LEN(linkcount(node).name) * _FONTWIDTH(font_normal)) + global.margin)
+                        nodehitbox.h = nodesize + (2 * hitboxmargin)
+
                         DIM nodecolor AS LONG
-                        IF mouseinbounds(nodecoord) THEN
+                        IF mouseinbounds(nodehitbox) THEN
                             IF mouse.left THEN dothis "action=view.nodegraph;nodetarget=" + linkcount(node).name
-                            nodecolor = col&(this.hovercolor)
+                            nodecolor = col&("seltext")
                         ELSE
                             nodecolor = col&(this.color)
                         END IF
@@ -609,14 +622,13 @@ SUB drawelement (this AS element, elementindex AS INTEGER, coord AS rectangle, i
     displayselection this, elementindex, coord
 END SUB
 
-SUB getlinkcounts (target() AS countlist, source() AS STRING, attribute AS STRING)
-    REDIM _PRESERVE target(0) AS countlist
+SUB getlinkcounts (target() AS countlist, source() AS STRING, node AS STRING)
     IF UBOUND(source) > 0 THEN
         sindex = 0: DO: sindex = sindex + 1
             found = 0
             IF UBOUND(target) > 0 THEN
                 tindex = 0: DO: tindex = tindex + 1
-                    IF target(tindex).name = getargument$(source(sindex), attribute) THEN
+                    IF target(tindex).name = getargument$(source(sindex), "target") OR target(tindex).name = getargument$(source(sindex), "origin") THEN
                         target(tindex).count = target(tindex).count + 1
                         found = -1
                     END IF
@@ -624,7 +636,13 @@ SUB getlinkcounts (target() AS countlist, source() AS STRING, attribute AS STRIN
             END IF
             IF found = 0 THEN
                 REDIM _PRESERVE target(UBOUND(target) + 1) AS countlist
-                target(UBOUND(target)).name = getargument$(source(sindex), attribute)
+                t$ = getargument$(source(sindex), "target")
+                o$ = getargument$(source(sindex), "origin")
+                IF LCASE$(t$) = LCASE$(node) THEN
+                    target(UBOUND(target)).name = o$
+                ELSEIF LCASE$(o$) = LCASE$(node) THEN
+                    target(UBOUND(target)).name = t$
+                END IF
                 target(UBOUND(target)).count = 1
             END IF
         LOOP UNTIL sindex = UBOUND(source)
@@ -646,9 +664,28 @@ SUB sortcountlist (target() AS countlist)
     LOOP UNTIL i = UBOUND(target) - 1
 END SUB
 
-SUB getlinkarray (array() AS STRING, nodetarget AS STRING)
-    REDIM _PRESERVE array AS STRING
-    file$ = path$(nodetarget)
+SUB getcombinedlinkarray (array() AS STRING, target AS STRING)
+    getlinkarray array(), target
+    REDIM nodearray(0) AS STRING
+    getnodearray nodearray(), "all"
+    IF UBOUND(nodearray) > 0 THEN
+        node = 0: DO: node = node + 1
+            REDIM _PRESERVE temparray(0) AS STRING
+            getlinkarray temparray(), LCASE$(nodearray(node))
+            IF UBOUND(temparray) > 0 THEN
+                link = 0: DO: link = link + 1
+                    IF LCASE$(getargument$(temparray(link), "target")) = LCASE$(target) THEN
+                        temparray(link) = MID$(temparray(link), 6, LEN(temparray(link)))
+                        addtostringarray array(), temparray(link)
+                    END IF
+                LOOP UNTIL link = UBOUND(temparray)
+            END IF
+        LOOP UNTIL node = UBOUND(nodearray)
+    END IF
+END SUB
+
+SUB getlinkarray (array() AS STRING, target AS STRING)
+    file$ = path$(target)
     freen = FREEFILE
     OPEN file$ FOR INPUT AS #freen
     IF EOF(freen) = 0 THEN
@@ -671,19 +708,21 @@ SUB displaylistarray (this AS element, array() AS STRING, coord AS rectangle)
 
     n = this.scroll
     DO: n = n + 1
-        listitemy = coord.y + ((global.margin + _FONTHEIGHT(font_normal)) * (n - 1))
-
-        IF mouse.x > coord.x - (2 * global.padding) AND mouse.x < coord.x + coord.w - (2 * global.padding) AND mouse.y > listitemy AND mouse.y < listitemy + _FONTHEIGHT(font_normal) THEN
-            IF mouse.left THEN clicklistitem this, array(), n
-            COLOR col&("active"), col&("t")
-        ELSE
-            COLOR this.drawcolor, col&("t")
-        END IF
-
-        DIM AS STRING listitems(0)
-        getlistitems listitems(), array(), n, this
+        lineheight = global.margin + _FONTHEIGHT(font_normal)
+        listitemy = coord.y + global.padding + (lineheight * (n - 1))
 
         IF listitemy + _FONTHEIGHT(font_normal) < coord.y + coord.h THEN
+            IF mouse.x > coord.x - (2 * global.padding) AND mouse.x < coord.x + coord.w - (2 * global.padding) AND mouse.y > listitemy AND mouse.y < listitemy + _FONTHEIGHT(font_normal) THEN
+                IF mouse.left THEN clicklistitem this, array(), n
+                COLOR col&("seltext"), col&("t")
+                LINE (coord.x - global.margin + 1, listitemy - global.padding)-(coord.x - global.margin + coord.w - 1, listitemy - global.padding + lineheight), col&("selected"), BF
+            ELSE
+                COLOR this.drawcolor, col&("t")
+            END IF
+
+            DIM AS STRING listitems(0)
+            getlistitems listitems(), array(), n, this
+
             'display info
             IF UBOUND(listitems) > 0 THEN
                 li = 0: DO: li = li + 1
@@ -724,7 +763,7 @@ END SUB
 SUB displayselection (this AS element, elementindex AS INTEGER, coord AS rectangle)
     IF textselectable(this) AND active(elementindex) THEN
         IF longselection(this) THEN
-            COLOR this.drawcolor, col&("selected")
+            COLOR col&("seltext"), col&("selected")
             minx = min(this.sel_start, this.sel_end)
             maxx = max(this.sel_start, this.sel_end)
             _PRINTSTRING (coord.x + (_FONTWIDTH(font_normal) * (LEN(this.text) + minx)), coord.y), MID$(this.buffer, minx, maxx - minx + 1)
@@ -816,6 +855,7 @@ END FUNCTION
 
 SUB elementmousehandling (this AS element, elementindex AS INTEGER, invoke AS invoke, coord AS rectangle)
     IF this.hovertextwait = 0 THEN this.hovertextwait = 1
+    'IF NOT active(elementindex) AND this.expand THEN this.expand = 0
     IF mouseinbounds(coord) THEN
         IF this.hovertime = 0 OR this.hoverx <> mouse.x OR this.hovery <> mouse.y THEN this.hovertime = TIMER: this.hoverx = mouse.x: this.hovery = mouse.y
     ELSE
@@ -831,14 +871,14 @@ SUB elementmousehandling (this AS element, elementindex AS INTEGER, invoke AS in
             IF mouse.left THEN
                 IF this.action <> "" THEN
                     uicall "activate", this, elementindex
-                ELSEIF toggleable(this) THEN
+                ELSEIF toggleable(this) AND NOT expanded THEN
                     uicall "toggle", this, elementindex
                 ELSEIF this.action = "" AND NOT active(elementindex) AND textselectable(this) THEN
                     activeelement = elementindex
                     this.sel_start = 0: this.sel_end = 0
                 ELSEIF expandable(this) AND this.statelock = 0 THEN
                     uicall "expand", this, elementindex
-                ELSEIF this.type = "slider" THEN
+                ELSEIF this.type = "slider" AND NOT expanded THEN
                     textwidth = LEN(this.text) * _FONTWIDTH(font_normal) + global.margin
                     val_start = coord.x + textwidth
                     val_end = coord.x + textwidth + global.sliderwidth
@@ -887,7 +927,7 @@ SUB elementmousehandling (this AS element, elementindex AS INTEGER, invoke AS in
                 END IF
             END IF
         ELSEIF draggable(this) THEN
-            IF mouse.left THEN
+            IF mouse.left AND NOT lockmouse THEN
                 this.offsetx = this.offsetx + mouse.offsetx
                 this.offsety = this.offsety + mouse.offsety
             END IF
@@ -936,7 +976,7 @@ SUB uicall (func AS STRING, this AS element, elementindex AS INTEGER)
             CASE "revert"
                 IF elementindex = history(UBOUND(history)).element THEN gobackintime this
             CASE "expand"
-                IF this.expand = -1 THEN this.expand = 0 ELSE this.expand = -1
+                IF this.expand = -1 THEN this.expand = 0: expanded = 0: ELSE this.expand = -1: expanded = -1
                 this.statelock = -1
             CASE "uppercase"
                 addtohistory this, elementindex
@@ -1462,7 +1502,18 @@ SUB writefilearray (array() AS STRING, file AS STRING, exclude AS STRING)
 END SUB
 
 SUB remove.nodelink (arguments AS STRING)
-    'TODO
+    DIM AS STRING filedata(0), file, trashline, origin, linkname, target
+    origin = getargument$(arguments, "origin")
+    linkname = getargument$(arguments, "name")
+    target = getargument$(arguments, "target")
+    file = path$(origin)
+    getfilearray filedata(), file
+    index = 0: DO: index = index + 1
+        IF getargument$(filedata(index), "nodeorigin") = origin AND getargument$(filedata(index), "linkname") = linkname AND getargument$(filedata(index), "nodetarget") = target THEN
+            trashline = filedata(index)
+        END IF
+    LOOP UNTIL index = UBOUND(filedata)
+    writefilearray filedata(), file, trashline
 END SUB
 
 SUB getnodearray (array() AS STRING, search AS STRING)
@@ -1485,6 +1536,7 @@ SUB getnodearray (array() AS STRING, search AS STRING)
                 IF MID$(nodefiles(index), _INSTRREV(nodefiles(index), ".") + 1, 4) = "node" THEN
                     nodename$ = MID$(nodefiles(index), 1, _INSTRREV(nodefiles(index), ".") - 1)
                     IF partmatch(nodename$, search) AND notinarray(array(), nodename$) AND LEN(search) >= global.matchthreshhold THEN addtostringarray array(), nodename$
+                    IF search = "all" THEN addtostringarray array(), nodename$
                 END IF
             LOOP UNTIL index = UBOUND(nodefiles)
         END IF
@@ -2078,17 +2130,18 @@ END SUB
 SUB loadcolors (scheme AS STRING)
     REDIM _PRESERVE schemecolor(0) AS colour
     file$ = global.internalpath + "\schemes\" + scheme + ".colors"
-    IF _FILEEXISTS(file$) THEN
-        freen = FREEFILE
-        OPEN file$ FOR INPUT AS #freen
-        IF EOF(freen) = 0 THEN
-            DO
-                INPUT #freen, color$
-                addcolor color$
-            LOOP UNTIL EOF(freen)
-        END IF
-        CLOSE #freen
+    IF NOT _FILEEXISTS(file$) THEN
+        file$ = global.internalpath + "\schemes\standard.colors"
     END IF
+    freen = FREEFILE
+    OPEN file$ FOR INPUT AS #freen
+    IF EOF(freen) = 0 THEN
+        DO
+            INPUT #freen, color$
+            addcolor color$
+        LOOP UNTIL EOF(freen)
+    END IF
+    CLOSE #freen
 END SUB
 
 SUB addcolor (colour AS STRING)
@@ -2102,9 +2155,11 @@ SUB addcolor (colour AS STRING)
 END SUB
 
 FUNCTION col& (colour AS STRING)
-    DO: i = i + 1
-        IF schemecolor(i).name = colour THEN col& = _RGBA(schemecolor(i).r, schemecolor(i).g, schemecolor(i).b, schemecolor(i).a): EXIT FUNCTION
-    LOOP UNTIL i = UBOUND(schemecolor)
+    IF UBOUND(schemecolor) > 0 THEN
+        DO: i = i + 1
+            IF LCASE$(schemecolor(i).name) = LCASE$(colour) THEN col& = _RGBA(schemecolor(i).r, schemecolor(i).g, schemecolor(i).b, schemecolor(i).a): EXIT FUNCTION
+        LOOP UNTIL i = UBOUND(schemecolor)
+    END IF
 END FUNCTION
 
 SUB cleargradients
