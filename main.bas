@@ -45,6 +45,8 @@ END TYPE
 TYPE nodelink
     AS STRING origin, name, target, date, time
 END TYPE
+REDIM SHARED AS countlist linkcount(0)
+REDIM SHARED AS STRING linkarray(0)
 
 'UI
 TYPE element
@@ -135,9 +137,9 @@ END SUB
 SUB setwindow (winresx AS INTEGER, winresy AS INTEGER)
     SCREEN _NEWIMAGE(winresx, winresy, 32)
     DO: LOOP UNTIL _SCREENEXISTS
-    screenresx = _DESKTOPWIDTH
-    screenresy = _DESKTOPHEIGHT
-    _SCREENMOVE (screenresx / 2) - (winresx / 2), (screenresy / 2) - (winresy / 2)
+    'screenresx = _DESKTOPWIDTH
+    'screenresy = _DESKTOPHEIGHT
+    '_SCREENMOVE (screenresx / 2) - (winresx / 2), (screenresy / 2) - (winresy / 2)
 END SUB
 
 SUB checkmouse
@@ -207,7 +209,7 @@ SUB displaymenu (elementindex AS INTEGER, keyhit AS INTEGER)
     DIM coord AS rectangle
     getcoord coord, elementindex
 
-    IF this.expand THEN
+    IF this.expand AND expandable(this) THEN
         expandelement this, elementindex
     END IF
 
@@ -218,15 +220,19 @@ SUB displaymenu (elementindex AS INTEGER, keyhit AS INTEGER)
     IF this.contextopen AND contextopen THEN displaycontext this, elementindex
 
     IF TIMER - this.hovertime >= this.hovertextwait AND this.hovertime > 0 AND this.hovertext <> "" AND NOT this.contextopen THEN
-        hoverpadding = 3
-        hoveryoffset = -_FONTHEIGHT(font_normal)
-        LINE (mouse.x - hoverpadding, mouse.y - hoverpadding + hoveryoffset)-(mouse.x + (LEN(this.hovertext) * _FONTWIDTH(font_normal)) + hoverpadding, mouse.y + _FONTHEIGHT(font_normal) + hoverpadding + hoveryoffset), col&("bg1"), BF
-        LINE (mouse.x - hoverpadding, mouse.y - hoverpadding + hoveryoffset)-(mouse.x + (LEN(this.hovertext) * _FONTWIDTH(font_normal)) + hoverpadding, mouse.y + _FONTHEIGHT(font_normal) + hoverpadding + hoveryoffset), col&("ui"), B
-        COLOR col&("ui"), col&("t")
-        _PRINTSTRING (mouse.x, mouse.y + hoveryoffset), this.hovertext
+        displayhovertext this
     END IF
 
     elements(elementindex) = this 'needed to save the changed data into the original elements array
+END SUB
+
+SUB displayhovertext (this AS element)
+    hoverpadding = 3
+    hoveryoffset = -_FONTHEIGHT(font_normal)
+    LINE (mouse.x - hoverpadding, mouse.y - hoverpadding + hoveryoffset)-(mouse.x + (LEN(this.hovertext) * _FONTWIDTH(font_normal)) + hoverpadding, mouse.y + _FONTHEIGHT(font_normal) + hoverpadding + hoveryoffset), col&("bg1"), BF
+    LINE (mouse.x - hoverpadding, mouse.y - hoverpadding + hoveryoffset)-(mouse.x + (LEN(this.hovertext) * _FONTWIDTH(font_normal)) + hoverpadding, mouse.y + _FONTHEIGHT(font_normal) + hoverpadding + hoveryoffset), col&("ui"), B
+    COLOR col&("ui"), col&("t")
+    _PRINTSTRING (mouse.x, mouse.y + hoveryoffset), this.hovertext
 END SUB
 
 SUB expandelement (this AS element, elementindex AS INTEGER)
@@ -318,12 +324,13 @@ SUB displaycontext (this AS element, elementindex AS INTEGER)
         entrycoord.x = contextcoord.x
         entrycoord.y = contextcoord.y + ((_FONTHEIGHT(font_normal) + contextpadding) * (contextentry - 1))
         entrycoord.w = contextcoord.w
-        entrycoord.h = _FONTHEIGHT(font_normal) + contextpadding
+        entrycoord.h = _FONTHEIGHT(font_normal) + contextpadding + global.padding
 
         IF mouseinbounds(entrycoord) AND contextdata(contextentry) <> "" THEN
             IF mouse.left THEN uicall LCASE$(contextdata(contextentry)), this, elmentindex: lockuicall = -1 ELSE lockuicall = 0
             COLOR col&("seltext"), col&("t")
-            LINE (entrycoord.x + 1, entrycoord.y + 1)-(entrycoord.x + entrycoord.w - 1, entrycoord.y + entrycoord.h - 1), col&("bg2"), BF
+            'IF contextentry = UBOUND(contextdata) THEN highlightadd = global.padding ELSE highlightadd = 0
+            LINE (entrycoord.x + 1, entrycoord.y + 1)-(entrycoord.x + entrycoord.w - 1, entrycoord.y + entrycoord.h - 1 + highlightadd), col&("bg2"), BF
         ELSE
             COLOR col&("ui"), col&("t")
         END IF
@@ -417,6 +424,8 @@ SUB displayelement (elementindex AS INTEGER, keyhit AS INTEGER) 'parses abstract
             ELSE
                 dothis buffer$ + getcurrentinputvalues$(-1)
             END IF
+        CASE 27
+            dothis "action=view.main;" + getcurrentinputvalues$(0)
         CASE 21248: invoke.delete = -1 'delete
         CASE 19200: invoke.left = -1 'left arrow
         CASE 19712: invoke.right = -1 'right arrow
@@ -545,11 +554,8 @@ SUB drawelement (this AS element, elementindex AS INTEGER, coord AS rectangle, i
             PAINT (val_start + (this.value * (val_end - val_start)), cy), this.drawcolor, this.drawcolor
             LINE (val_start, cy)-(val_end, cy + 1), this.drawcolor, BF
         CASE "nodegraph"
-            searchnode$ = elements(gettitleid).text
-            DIM AS STRING linkarray(0)
-            getcombinedlinkarray linkarray(), searchnode$
-            DIM AS countlist linkcount(0)
-            getlinkcounts linkcount(), linkarray(), searchnode$
+            REDIM AS LONG nodecolor, linkcolor
+            REDIM AS rectangle nodecoord, nodecoord2, nodehitbox
 
             scrolllimit = INT((coord.h / 2) / 25)
             IF this.scroll > scrolllimit THEN this.scroll = scrolllimit
@@ -560,38 +566,59 @@ SUB drawelement (this AS element, elementindex AS INTEGER, coord AS rectangle, i
             centery = coord.y + (coord.h / 2) + this.offsety
 
             'DO: i = i + 1
-            '    _PRINTSTRING (centerx + nodesize, centery + ((i - 1) * _FONTHEIGHT(font_normal))), linkarray(i)
-            'LOOP UNTIL i = UBOUND(linkarray)
-
+            '    _PRINTSTRING (centerx + nodesize, centery + ((i - 1) * _FONTHEIGHT(font_normal))), lst$(linkcount(i).count)
+            'LOOP UNTIL i = UBOUND(linkcount)
             IF UBOUND(linkcount) > 0 THEN
                 node = 0: DO: node = node + 1
-                    changex = SIN((node - 1) * (_PI / 4)) * distance
-                    changey = -COS((node - 1) * (_PI / 4)) * distance
-                    nodex = centerx + changex
-                    nodey = centery + changey
+                    REDIM AS STRING linkarray2(0)
+                    getlinkarray linkarray2(), linkcount(node).name
+                    REDIM AS countlist linkcount2(0)
+                    getlinkcounts linkcount2(), linkarray2(), linkcount(node).name
 
-                    DIM nodecoord AS rectangle
-                    nodecoord.x = nodex - (nodesize / 2)
-                    nodecoord.y = nodey - (nodesize / 2)
+                    nodecoord.x = getnodex(centerx, node, distance) - (nodesize / 2)
+                    nodecoord.y = getnodey(centery, node, distance) - (nodesize / 2)
                     nodecoord.w = nodesize
                     nodecoord.h = nodesize
 
-                    IF nodecoord.x > coord.x AND nodecoord.x + nodecoord.w < coord.x + coord.w AND nodecoord.y > coord.y AND nodecoord.y + nodecoord.h < coord.y + coord.h THEN
-                        DIM nodehitbox AS rectangle
+                    IF UBOUND(linkcount2) > 0 AND inbounds(nodecoord, coord) THEN
+                        node2 = 0: DO: node2 = node2 + 1
+                            node3 = 0: DO: node3 = node3 + 1
+                                nodecoord2.x = getnodex(centerx, node3, distance) - (nodesize / 2)
+                                nodecoord2.y = getnodey(centery, node3, distance) - (nodesize / 2)
+                                nodecoord2.w = nodesize
+                                nodecoord2.h = nodesize
+                                linkcolor = getlinkcolor~&(linkcount2(), node2, linkcount(), 1, "count")
+                                IF linkcount2(node2).name = linkcount(node3).name THEN
+                                    IF inbounds(nodecoord2, coord) THEN
+                                        LINE (getnodex(centerx, node, distance), getnodey(centery, node, distance))-(getnodex(centerx, node3, distance), getnodey(centery, node3, distance)), linkcolor
+                                    END IF
+                                END IF
+                            LOOP UNTIL node3 = UBOUND(linkcount)
+                        LOOP UNTIL node2 = UBOUND(linkcount2)
+                    END IF
+                LOOP UNTIL node = UBOUND(linkcount)
+                node = 0: DO: node = node + 1
+                    nodecoord.x = getnodex(centerx, node, distance) - (nodesize / 2)
+                    nodecoord.y = getnodey(centery, node, distance) - (nodesize / 2)
+                    nodecoord.w = nodesize
+                    nodecoord.h = nodesize
+
+                    IF inbounds(nodecoord, coord) THEN
                         hitboxmargin = 5
                         nodehitbox.x = nodecoord.x - hitboxmargin
                         nodehitbox.y = nodecoord.y - hitboxmargin
                         nodehitbox.w = nodesize + hitboxmargin + ((LEN(linkcount(node).name) * _FONTWIDTH(font_normal)) + global.margin)
                         nodehitbox.h = nodesize + (2 * hitboxmargin)
 
-                        DIM nodecolor AS LONG
                         IF mouseinbounds(nodehitbox) THEN
-                            IF mouse.left THEN dothis "action=view.nodegraph;nodetarget=" + linkcount(node).name
+                            IF mouse.left THEN this.offsetx = 0: this.offsety = 0: dothis "action=view.nodegraph;nodetarget=" + linkcount(node).name
                             nodecolor = col&("seltext")
                         ELSE
                             nodecolor = col&(this.color)
                         END IF
-                        LINE (centerx, centery)-(nodex, nodey), col&("bg2")
+                        linkcolor = getlinkcolor~&(linkcount(), node, linkcount(), 1, "count")
+
+                        LINE (centerx, centery)-(getnodex(centerx, node, distance), getnodey(centery, node, distance)), linkcolor
                         LINE (nodecoord.x, nodecoord.y)-(nodecoord.x + nodecoord.w, nodecoord.y + nodecoord.h), nodecolor, BF
                         COLOR nodecolor, col&("t")
                         _PRINTSTRING (nodecoord.x + nodecoord.w + global.margin, nodecoord.y), linkcount(node).name
@@ -621,6 +648,38 @@ SUB drawelement (this AS element, elementindex AS INTEGER, coord AS rectangle, i
     END SELECT
     displayselection this, elementindex, coord
 END SUB
+
+FUNCTION getlinkcolor~& (array() AS countlist, node AS _UNSIGNED _INTEGER64, comparearray() AS countlist, comparenode AS _UNSIGNED _INTEGER64, attribute AS STRING)
+    SELECT CASE attribute
+        CASE "count"
+            factor = array(node).count / comparearray(comparenode).count
+            alpha = 255 * factor
+            IF isbrightcolor(col&("bg1")) THEN getlinkcolor~& = _RGBA(0, 0, 0, alpha) ELSE getlinkcolor~& = _RGBA(255, 255, 255, alpha)
+            EXIT FUNCTION
+    END SELECT
+END FUNCTION
+
+FUNCTION isbrightcolor (colour AS LONG)
+    IF _RED(colour) > 127 OR _GREEN(colour) > 127 OR _BLUE(colour) > 127 THEN
+        isbrightcolor = -1
+    ELSE
+        isbrightcolor = 0
+    END IF
+END FUNCTION
+
+FUNCTION getnodex (centerx AS _FLOAT, node AS _UNSIGNED _INTEGER64, distance AS INTEGER)
+    changex = SIN((node - 1) * (_PI / 4)) * distance
+    getnodex = centerx + changex
+END FUNCTION
+
+FUNCTION getnodey (centery AS _FLOAT, node AS _UNSIGNED _INTEGER64, distance AS INTEGER)
+    changey = -COS((node - 1) * (_PI / 4)) * distance
+    getnodey = centery + changey
+END FUNCTION
+
+FUNCTION inbounds (inner AS rectangle, outer AS rectangle)
+    IF inner.x > outer.x AND inner.x + inner.w < outer.x + outer.w AND inner.y > outer.y AND inner.y + inner.h < outer.y + outer.h THEN inbounds = -1 ELSE inbounds = 0
+END FUNCTION
 
 SUB getlinkcounts (target() AS countlist, source() AS STRING, node AS STRING)
     IF UBOUND(source) > 0 THEN
@@ -656,7 +715,7 @@ SUB sortcountlist (target() AS countlist)
     DO
         swapped = 0
         i = 0: DO: i = i + 1
-            IF target(i).count > target(i + 1).count THEN
+            IF target(i).count < target(i + 1).count THEN
                 SWAP target(i), target(i + 1)
                 swapped = -1
             END IF
@@ -715,7 +774,11 @@ SUB displaylistarray (this AS element, array() AS STRING, coord AS rectangle)
             IF mouse.x > coord.x - (2 * global.padding) AND mouse.x < coord.x + coord.w - (2 * global.padding) AND mouse.y > listitemy AND mouse.y < listitemy + _FONTHEIGHT(font_normal) THEN
                 IF mouse.left THEN clicklistitem this, array(), n
                 COLOR col&("seltext"), col&("t")
-                LINE (coord.x - global.margin + 1, listitemy - global.padding)-(coord.x - global.margin + coord.w - 1, listitemy - global.padding + lineheight), col&("selected"), BF
+                IF n = 1 THEN
+                    LINE (coord.x - (2 * global.padding) + 1, listitemy - (2 * global.padding))-(coord.x - (2 * global.padding) + coord.w - 1, listitemy - global.padding + lineheight), col&("selected"), BF
+                ELSE
+                    LINE (coord.x - (2 * global.padding) + 1, listitemy - global.padding)-(coord.x - (2 * global.padding) + coord.w - 1, listitemy - global.padding + lineheight), col&("selected"), BF
+                END IF
             ELSE
                 COLOR this.drawcolor, col&("t")
             END IF
@@ -1065,23 +1128,22 @@ SUB elementkeyhandling (this AS element, elementindex AS INTEGER, bufferchar AS 
     ELSE
         IF ctrldown AND shiftdown THEN
             IF invoke.left THEN
-                IF NOT this.sel_start THEN this.sel_start = this.cursor
-                this.sel_end = _INSTRREV(MID$(this.buffer, 1, this.cursor - 1), " ")
-                this.cursor = this.sel_end
+                this.sel_start = this.cursor
+                IF this.sel_end = 0 AND NOT longselection(this) THEN this.sel_end = this.sel_start
+                this.sel_end = _INSTRREV(" " + MID$(this.buffer, 1, this.sel_end - 2), " ")
             END IF
             IF invoke.right THEN
-                IF NOT this.sel_start THEN this.sel_start = this.cursor
-                this.sel_end = INSTR(MID$(this.buffer, this.cursor + 1, LEN(this.buffer)), " ") + this.cursor
-                this.cursor = this.sel_end
+                this.sel_start = this.cursor + 1
+                IF this.sel_end = 0 THEN this.sel_end = this.sel_start
+                this.sel_end = INSTR(MID$(this.buffer, this.sel_end + 2, LEN(this.buffer)) + " ", " ") + this.sel_end
             END IF
         ELSEIF ctrldown AND NOT shiftdown THEN
-            IF invoke.left THEN this.cursor = _INSTRREV(MID$(this.buffer, 1, this.cursor - 1), " ")
-            IF invoke.right THEN this.cursor = INSTR(MID$(this.buffer, this.cursor + 1, LEN(this.buffer)), " ") + this.cursor
+            IF invoke.left THEN this.cursor = _INSTRREV(" " + MID$(this.buffer, 1, this.cursor - 1), " ") - 1
+            IF invoke.right THEN this.cursor = INSTR(MID$(this.buffer, this.cursor + 1, LEN(this.buffer)) + " ", " ") + this.cursor
         ELSEIF shiftdown AND NOT ctrldown THEN
             IF invoke.left THEN
                 IF this.sel_start THEN
                     IF this.sel_end > 0 THEN this.sel_end = this.sel_end - 1
-                    this.cursor = this.sel_end
                 ELSE
                     this.sel_start = this.cursor
                     this.sel_end = this.sel_start
@@ -1090,7 +1152,6 @@ SUB elementkeyhandling (this AS element, elementindex AS INTEGER, bufferchar AS 
             IF invoke.right THEN
                 IF this.sel_start THEN
                     IF this.sel_end < LEN(this.buffer) THEN this.sel_end = this.sel_end + 1
-                    this.cursor = this.sel_end
                 ELSE
                     this.sel_start = this.cursor
                     this.sel_end = this.sel_start
@@ -1112,8 +1173,22 @@ SUB elementkeyhandling (this AS element, elementindex AS INTEGER, bufferchar AS 
                 END IF
             END IF
         END IF
-        IF invoke.jumptoend THEN this.cursor = LEN(this.buffer)
-        IF invoke.jumptofront THEN this.cursor = 0
+        IF invoke.jumptoend THEN
+            IF shiftdown THEN
+                this.sel_start = this.cursor + 1
+                this.sel_end = LEN(this.buffer)
+            ELSE
+                this.cursor = LEN(this.buffer)
+            END IF
+        END IF
+        IF invoke.jumptofront THEN
+            IF shiftdown THEN
+                this.sel_start = this.cursor
+                this.sel_end = 1
+            ELSE
+                this.cursor = 0
+            END IF
+        END IF
     END IF
 
     'selection management
@@ -1402,7 +1477,14 @@ SUB dothis (arguments AS STRING) 'program-specific actions
     SELECT CASE MID$(action$, 1, INSTR(action$, ".") - 1)
         CASE "view"
             currentview = MID$(action$, INSTR(action$, ".") + 1, LEN(action$))
-            IF currentview = "node" OR currentview = "nodegraph" THEN elements(gettitleid).text = nodetarget
+            IF currentview = "node" OR currentview = "nodegraph" THEN
+                elements(gettitleid).text = nodetarget
+                searchnode$ = nodetarget
+                REDIM AS STRING linkarray(0)
+                getcombinedlinkarray linkarray(), searchnode$
+                REDIM AS countlist linkcount(0)
+                getlinkcounts linkcount(), linkarray(), searchnode$
+            END IF
     END SELECT
 END SUB
 
