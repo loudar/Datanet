@@ -26,7 +26,7 @@ TYPE global
     AS STRING nodepath, internalpath, license, scheme
     AS _UNSIGNED _INTEGER64 maxnodeid, matchthreshhold
     AS _FLOAT margin, padding, round, windowsize, sliderwidth
-    AS _BYTE licensestatus, exactsearch, actionlock
+    AS _BYTE licensestatus, partialsearch, actionlock
 END TYPE
 REDIM SHARED global AS global
 
@@ -61,7 +61,7 @@ TYPE element
     AS INTEGER contextx, contexty
 END TYPE
 REDIM SHARED elements(0) AS element
-REDIM SHARED AS STRING viewname(0), currentview
+REDIM SHARED AS STRING viewname(0), currentview, transmittedtext
 TYPE invoke
     AS _BYTE delete, back, select, right, left, deselect, jumptoend, jumptofront
 END TYPE
@@ -94,15 +94,16 @@ END TYPE
 
 resetallvalues
 
+_SCREENSHOW
 REDIM SHARED AS INTEGER screenresx, screenresy, winresx, winresy
 screenresx = _DESKTOPWIDTH
 screenresy = _DESKTOPHEIGHT
 winresx = screenresx * global.windowsize 'to be replaced with config-based factor
 winresy = screenresy * global.windowsize
 SCREEN _NEWIMAGE(winresx, winresy, 32)
-_SCREENMOVE (screenresx / 2) - (winresx / 2), (screenresy / 2) - (winresy / 2)
-_SCREENSHOW
 DO: LOOP UNTIL _SCREENEXISTS
+_SCREENMOVE (screenresx / 2) - (winresx / 2), (screenresy / 2) - (winresy / 2)
+
 _TITLE "Datanet"
 
 
@@ -177,9 +178,7 @@ SUB checkmouse
 END SUB
 
 FUNCTION checkkeyboard
-    DIM keyhit AS _UNSIGNED _INTEGER64
     keyhit = _KEYHIT
-    IF keyhit < 0 THEN keyhit = 0
     checkkeyboard = keyhit
 END FUNCTION
 
@@ -387,13 +386,33 @@ FUNCTION getmaxstringlen (array() AS STRING)
 END FUNCTION
 
 FUNCTION getbufferchar$ (this AS element, keyhit AS INTEGER)
-    IF isnumchar(keyhit) AND this.allownumbers THEN
+    IF isnumchar(keyhit) = -1 AND this.allownumbers THEN
         getbufferchar$ = CHR$(keyhit)
+    ELSEIF isnumchar(keyhit) = 1 AND this.allownumbers THEN
+        getbufferchar$ = CHR$(-keyhit)
     ELSEIF istextchar(keyhit) AND this.allowtext THEN
         getbufferchar$ = CHR$(keyhit)
     ELSEIF isspecialchar(keyhit) AND this.allowspecial THEN
         getbufferchar$ = CHR$(keyhit)
     END IF
+END FUNCTION
+
+FUNCTION istextchar (keyhit AS INTEGER)
+    IF (keyhit >= ASC("A") AND keyhit <= ASC("Z")) OR (keyhit >= ASC("a") AND keyhit <= ASC("z")) OR keyhit = ASC(" ") THEN istextchar = -1 ELSE istextchar = 0
+END FUNCTION
+
+FUNCTION isnumchar (keyhit AS INTEGER)
+    IF keyhit >= ASC("0") AND keyhit <= ASC("9") THEN
+        isnumchar = -1
+    ELSEIF keyhit <= -ASC("0") AND keyhit >= -ASC("9") AND ctrldown THEN
+        isnumchar = 1
+    ELSE
+        isnumchar = 0
+    END IF
+END FUNCTION
+
+FUNCTION isspecialchar (keyhit AS INTEGER)
+    IF (keyhit >= ASC("!") AND keyhit <= ASC("~") AND NOT istextchar(keyhit) AND NOT isnumchar(keyhit)) THEN isspecialchar = -1 ELSE isspecialchar = 0
 END FUNCTION
 
 SUB displayelement (elementindex AS INTEGER, keyhit AS INTEGER) 'parses abstract coordinates into discrete coordinates
@@ -402,7 +421,7 @@ SUB displayelement (elementindex AS INTEGER, keyhit AS INTEGER) 'parses abstract
     DIM invoke AS invoke
     this = elements(elementindex)
 
-    IF active(elementindex) THEN bufferchar = getbufferchar(this, keyhit)
+    IF active(elementindex) THEN bufferchar = getbufferchar$(this, keyhit)
 
     'general
     SELECT CASE keyhit
@@ -422,10 +441,10 @@ SUB displayelement (elementindex AS INTEGER, keyhit AS INTEGER) 'parses abstract
             IF shiftdown THEN
                 activeelement = getnextelement(currentview, activeelement)
             ELSE
-                dothis buffer$ + getcurrentinputvalues$(-1)
+                dothis buffer$ + getcurrentinputvalues$(-1), 0
             END IF
         CASE 27
-            dothis "action=view.main;" + getcurrentinputvalues$(0)
+            dothis "action=view.main;" + getcurrentinputvalues$(0), 0
         CASE 21248: invoke.delete = -1 'delete
         CASE 19200: invoke.left = -1 'left arrow
         CASE 19712: invoke.right = -1 'right arrow
@@ -480,16 +499,7 @@ SUB drawelement (this AS element, elementindex AS INTEGER, coord AS rectangle, i
         CASE "text"
             coord.y = coord.y + global.padding
             COLOR this.drawcolor, col&("t")
-            _PRINTSTRING (coord.x, coord.y), this.text + " " + this.buffer
-        CASE "time"
-            coord.y = coord.y + global.padding
-            COLOR this.drawcolor, col&("t")
-            this.buffer = TIME$
-            _PRINTSTRING (coord.x, coord.y), this.text + " " + this.buffer
-        CASE "date"
-            coord.y = coord.y + global.padding
-            COLOR this.drawcolor, col&("t")
-            this.buffer = DATE$
+            checkforspecialtext this
             _PRINTSTRING (coord.x, coord.y), this.text + " " + this.buffer
         CASE "title"
             _FONT font_big
@@ -501,11 +511,7 @@ SUB drawelement (this AS element, elementindex AS INTEGER, coord AS rectangle, i
         CASE "box"
             rectangle "x=" + lst$(coord.x) + ";y=" + lst$(coord.y) + ";w=" + lst$(coord.w) + ";h=" + lst$(coord.h) + ";style=" + this.style + ";angle=" + this.angle + ";round=" + this.round, this.drawcolor
         CASE "gradient"
-            cleargradients
-            newgcolor 1, 1, 0, col&("ui")
-            newgcolor 1, 2, 33, col&("ui2")
-            newgcolor 1, 3, 67, col&("bg2")
-            newgcolor 1, 4, 100, col&("active")
+            makegradient this, -1
             drawgradient 1, coord.x, coord.x + coord.w, coord.y, coord.y + coord.h, 0, "h"
         CASE "checkbox"
             boxsize = _FONTHEIGHT(font_normal) * 0.75
@@ -611,7 +617,7 @@ SUB drawelement (this AS element, elementindex AS INTEGER, coord AS rectangle, i
                         nodehitbox.h = nodesize + (2 * hitboxmargin)
 
                         IF mouseinbounds(nodehitbox) THEN
-                            IF mouse.left THEN this.offsetx = 0: this.offsety = 0: dothis "action=view.nodegraph;nodetarget=" + linkcount(node).name
+                            IF mouse.left THEN this.offsetx = 0: this.offsety = 0: dothis "action=view.nodegraph;nodetarget=" + linkcount(node).name, 0
                             nodecolor = col&("seltext")
                         ELSE
                             nodecolor = col&(this.color)
@@ -648,6 +654,53 @@ SUB drawelement (this AS element, elementindex AS INTEGER, coord AS rectangle, i
     END SELECT
     displayselection this, elementindex, coord
 END SUB
+
+SUB checkforspecialtext (this AS element)
+    SELECT CASE this.name
+        CASE "time"
+            this.buffer = TIME$
+        CASE "date"
+            this.buffer = DATE$
+        CASE "transmit"
+            this.buffer = transmittedtext
+    END SELECT
+END SUB
+
+SUB makegradient (this AS element, clearprevious AS _BYTE)
+    IF clearprevious THEN cleargradients
+    IF this.type = "gradient" THEN
+        colorcount = getcolorcount(this.color)
+        DO: gindex = gindex + 1
+            newgcolor VAL(this.name), gindex, INT((100 / (colorcount - 1)) * (gindex - 1)), col&(getcolor$(this.color, gindex))
+        LOOP UNTIL gindex = colorcount
+    END IF
+END SUB
+
+FUNCTION getcolor$ (basestring AS STRING, num AS INTEGER)
+    COLOR col&("ui"), col&("bg1")
+    DIM buffer AS STRING
+    buffer = basestring
+    DO
+        testfor = INSTR(buffer, "/")
+        colors = colors + 1
+        IF testfor = 0 THEN testfor = LEN(buffer) + 2
+        IF colors = num THEN
+            getcolor$ = MID$(buffer, 1, testfor - 1): EXIT FUNCTION
+        END IF
+        buffer = MID$(buffer, testfor + 1, LEN(buffer))
+    LOOP UNTIL buffer = ""
+END FUNCTION
+
+FUNCTION getcolorcount (basestring AS STRING)
+    DIM buffer AS STRING
+    buffer = basestring
+    DO
+        testfor = INSTR(buffer, "/")
+        IF testfor THEN colors = colors + 1
+        buffer = MID$(buffer, testfor + 1, LEN(buffer))
+    LOOP UNTIL testfor = 0
+    getcolorcount = colors + 1
+END FUNCTION
 
 FUNCTION getlinkcolor~& (array() AS countlist, node AS _UNSIGNED _INTEGER64, comparearray() AS countlist, comparenode AS _UNSIGNED _INTEGER64, attribute AS STRING)
     SELECT CASE attribute
@@ -802,7 +855,7 @@ END SUB
 SUB clicklistitem (this AS element, array() AS STRING, n AS INTEGER)
     SELECT CASE this.name
         CASE "nodelist"
-            dothis "action=view.nodegraph;nodetarget=" + array(n)
+            dothis "action=view.nodegraph;nodetarget=" + array(n), 0
         CASE "linklist"
             'TODO
     END SELECT
@@ -902,18 +955,6 @@ FUNCTION getmaxelement (viewtogetfrom AS STRING)
         LOOP UNTIL e = UBOUND(elements)
     END IF
     getmaxelement = buffer
-END FUNCTION
-
-FUNCTION istextchar (keyhit AS INTEGER)
-    IF (keyhit >= ASC("A") AND keyhit <= ASC("Z")) OR (keyhit >= ASC("a") AND keyhit <= ASC("z")) OR keyhit = ASC(" ") THEN istextchar = -1 ELSE istextchar = 0
-END FUNCTION
-
-FUNCTION isnumchar (keyhit AS INTEGER)
-    IF keyhit >= ASC("0") AND keyhit <= ASC("9") THEN isnumchar = -1 ELSE isnumchar = 0
-END FUNCTION
-
-FUNCTION isspecialchar (keyhit AS INTEGER)
-    IF (keyhit >= ASC("!") AND keyhit <= ASC("~") AND NOT istextchar(keyhit) AND NOT isnumchar(keyhit)) THEN isspecialchar = -1 ELSE isspecialchar = 0
 END FUNCTION
 
 SUB elementmousehandling (this AS element, elementindex AS INTEGER, invoke AS invoke, coord AS rectangle)
@@ -1018,7 +1059,7 @@ SUB uicall (func AS STRING, this AS element, elementindex AS INTEGER)
     IF NOT lockuicall THEN
         SELECT CASE func
             CASE "activate"
-                dothis "action=" + this.action + ";" + getcurrentinputvalues$(-1)
+                dothis "action=" + this.action + ";" + getcurrentinputvalues$(0), 0
             CASE "select all"
                 this.sel_start = 1: this.sel_end = LEN(this.buffer)
             CASE "paste"
@@ -1111,6 +1152,14 @@ SUB elementkeyhandling (this AS element, elementindex AS INTEGER, bufferchar AS 
                     uicall "search", this, elementindex
                 CASE "n" 'replace buffer with "action=add.node;nodetarget="
                     uicall "add node", this, elementindex
+                CASE "0"
+                    IF this.name = "commandline" THEN addtohistory this, elementindex: this.buffer = this.buffer + "action=": this.cursor = LEN(this.buffer)
+                CASE "1" 'attach "nodeorigin=" to buffer
+                    IF this.name = "commandline" THEN addtohistory this, elementindex: this.buffer = this.buffer + "nodeorigin=": this.cursor = LEN(this.buffer)
+                CASE "2" 'attach "nodeorigin=" to buffer
+                    IF this.name = "commandline" THEN addtohistory this, elementindex: this.buffer = this.buffer + "linkname=": this.cursor = LEN(this.buffer)
+                CASE "3" 'attach "nodeorigin=" to buffer
+                    IF this.name = "commandline" THEN addtohistory this, elementindex: this.buffer = this.buffer + "nodetarget=": this.cursor = LEN(this.buffer)
                 CASE "r" 'should reset the offset position, but doesn't for some reason
                     this.offsetx = 0: this.offsety = 0
                 CASE ELSE
@@ -1357,7 +1406,7 @@ END FUNCTION
 
 FUNCTION geteypos$ (e AS INTEGER)
     IF (elements(e).y = "previousbottom" OR elements(e).y = "prevb" OR elements(e).y = "pb" OR elements(e).y = "flex") AND e > 1 THEN
-        geteypos$ = lst$(VAL(geteypos$(e - 1)) + VAL(geteheight$(e - 1)) + global.margin)
+        geteypos$ = lst$(VAL(geteypos$(e - 1)) + VAL(geteheight$(e - 1)) + (SGN(VAL(geteheight$(e - 1))) * global.margin))
     ELSEIF (elements(e).y = "previoustop" OR elements(e).y = "prevt" OR elements(e).y = "pt" OR elements(e).y = "-flex") AND e > 1 THEN
         geteypos$ = lst$(VAL(geteypos$(e - 1)) - VAL(geteheight$(e)) - global.margin)
     ELSEIF (elements(e).y = "nexttop" OR elements(e).y = "nextt" OR elements(e).y = "nt") AND e < UBOUND(elements) THEN
@@ -1388,6 +1437,11 @@ FUNCTION getewidth$ (e AS INTEGER)
 END FUNCTION
 
 FUNCTION geteheight$ (e AS INTEGER)
+    IF elements(e).type = "title" OR elements(e).type = "text" THEN
+        IF elements(e).text = "" AND elements(e).buffer = "" THEN
+            geteheight$ = "0": EXIT FUNCTION
+        END IF
+    END IF
     IF elements(e).type = "title" THEN geteheight$ = lst$(_FONTHEIGHT(font_big) + (2 * global.padding)): EXIT FUNCTION
     IF elements(e).h = "0" THEN
         geteheight$ = lst$(_FONTHEIGHT(font_normal) + (2 * global.padding))
@@ -1406,19 +1460,20 @@ FUNCTION getepadding$ (e AS INTEGER)
     END IF
 END FUNCTION
 
-SUB dothis (arguments AS STRING) 'program-specific actions
-    IF global.actionlock THEN
+SUB dothis (arguments AS STRING, recursivecall AS _BYTE) 'program-specific actions
+    IF global.actionlock AND NOT recursivecall THEN
         EXIT SUB
     ELSE
         IF mouse.left THEN global.actionlock = -1
     END IF
-    DIM AS STRING nodeorigin, nodetype, nodetarget, linkname, license, url
+    DIM AS STRING nodeorigin, nodetype, nodetarget, linkname, license, url, success
     nodeorigin = getargument$(arguments, "nodeorigin")
     nodetype = getargument$(arguments, "nodetype")
     nodetarget = getargument$(arguments, "nodetarget")
     linkname = getargument$(arguments, "linkname")
     action$ = getargument$(arguments, "action")
     license = getargument$(arguments, "license")
+    transmittedtext = getargument$(arguments, "transmit")
     url = getargument$(arguments, "url")
     SELECT CASE action$
         CASE "add.node"
@@ -1428,38 +1483,38 @@ SUB dothis (arguments AS STRING) 'program-specific actions
                     nodecount = nodecount + 1
                     nodetarget = nodetarget + "_" + lst$(nodecount)
                 END IF
-                add.node "target=" + nodetarget + ";type=" + nodetype
-                dothis "action=view.main"
+                success = add.node$("target=" + nodetarget + ";type=" + nodetype)
+                dothis "action=view.main;transmit=" + success, -1
             ELSE
-                dothis "action=view.add.node"
+                dothis "action=view.add.node", -1
             END IF
         CASE "add.nodelink"
             IF set(nodeorigin) AND set(linkname) AND set(nodetarget) THEN
-                add.nodelink "origin=" + nodeorigin + ";name=" + linkname + ";target=" + nodetarget
-                dothis "action=view.main"
+                success = add.nodelink$("origin=" + nodeorigin + ";name=" + linkname + ";target=" + nodetarget)
+                dothis "action=view.main;transmit=" + success, -1
             ELSE
-                dothis "action=view.add.nodelink"
+                dothis "action=view.add.nodelink", -1
             END IF
         CASE "remove.node"
             IF set(nodetarget) THEN
-                remove.node "target=" + nodetarget
-                dothis "action=view.main"
+                success = remove.node$("target=" + nodetarget)
+                dothis "action=view.main;transmit=" + success, -1
             ELSE
-                dothis "action=view.remove.node"
+                dothis "action=view.remove.node", -1
             END IF
         CASE "remove.nodelink"
             IF set(nodeorigin) AND set(linkname) AND set(nodetarget) THEN
-                remove.nodelink "origin=" + nodeorigin + ";name=" + linkname + ";target=" + nodetarget
-                dothis "action=view.main"
+                success = remove.nodelink$("origin=" + nodeorigin + ";name=" + linkname + ";target=" + nodetarget)
+                dothis "action=view.main;transmit=" + success, -1
             ELSE
-                dothis "action=view.remove.nodelink"
+                dothis "action=view.remove.nodelink", -1
             END IF
         CASE "add.license"
             IF set(license) THEN
-                add.license "license=" + license
-                dothis "action=view.main"
+                success = add.license$("license=" + license)
+                dothis "action=view.main;transmit=" + success, -1
             ELSE
-                dothis "action=view.add.license"
+                dothis "action=view.add.license", -1
             END IF
         CASE "web"
             openbrowser url
@@ -1495,17 +1550,20 @@ FUNCTION gettitleid
     LOOP UNTIL e = UBOUND(elements)
 END FUNCTION
 
-SUB add.license (arguments AS STRING)
+FUNCTION add.license$ (arguments AS STRING)
     DIM license AS STRING
     license = getargument$(arguments, "license")
     IF checkLicense(license) THEN
         setlicense license, -1
         license = ""
         saveconfig
+        add.license$ = "License added successfully."
+    ELSE
+        add.license$ = "License verification failed."
     END IF
-END SUB
+END FUNCTION
 
-SUB add.node (arguments AS STRING)
+FUNCTION add.node$ (arguments AS STRING)
     DIM this AS node
     this.name = getargument$(arguments, "target")
     this.type = getargument$(arguments, "type")
@@ -1514,8 +1572,11 @@ SUB add.node (arguments AS STRING)
     IF set(this.name) AND set(this.type) THEN
         writenode "", this
         getmaxnodeid
+        add.node$ = "Node " + this.name + " successfully added."
+    ELSE
+        add.node$ = "Node " + this.name + " could not be added."
     END IF
-END SUB
+END FUNCTION
 
 SUB writenode (arguments AS STRING, this AS node)
     file$ = path$(this.name)
@@ -1533,8 +1594,8 @@ SUB writenode (arguments AS STRING, this AS node)
     CLOSE #filen
 END SUB
 
-SUB remove.node (arguments AS STRING)
-    DIM AS STRING nodearray(0), linkarray(0), nodename
+FUNCTION remove.node$ (arguments AS STRING)
+    REDIM AS STRING nodearray(0), linkarray(0), nodename
     nodename = getargument$(arguments, "target")
     getnodearray nodearray(), nodename
     IF UBOUND(nodearray) > 0 THEN
@@ -1552,8 +1613,11 @@ SUB remove.node (arguments AS STRING)
     file$ = path$(nodename)
     IF _FILEEXISTS(file$) THEN
         KILL file$
+        remove.node$ = "Node " + nodename + " successfully deleted."
+    ELSE
+        remove.node$ = "Node does not exist."
     END IF
-END SUB
+END FUNCTION
 
 SUB resavenodewithout (leaveout AS STRING, nodename AS STRING)
     file$ = path$(nodename)
@@ -1583,7 +1647,7 @@ SUB writefilearray (array() AS STRING, file AS STRING, exclude AS STRING)
     CLOSE #freen
 END SUB
 
-SUB remove.nodelink (arguments AS STRING)
+FUNCTION remove.nodelink$ (arguments AS STRING)
     DIM AS STRING filedata(0), file, trashline, origin, linkname, target
     origin = getargument$(arguments, "origin")
     linkname = getargument$(arguments, "name")
@@ -1591,12 +1655,17 @@ SUB remove.nodelink (arguments AS STRING)
     file = path$(origin)
     getfilearray filedata(), file
     index = 0: DO: index = index + 1
-        IF getargument$(filedata(index), "nodeorigin") = origin AND getargument$(filedata(index), "linkname") = linkname AND getargument$(filedata(index), "nodetarget") = target THEN
+        IF getargument$(filedata(index), "origin") = origin AND getargument$(filedata(index), "name") = linkname AND getargument$(filedata(index), "target") = target THEN
             trashline = filedata(index)
         END IF
     LOOP UNTIL index = UBOUND(filedata)
     writefilearray filedata(), file, trashline
-END SUB
+    IF trashline <> "" THEN
+        remove.nodelink$ = "Link from " + origin + " to " + target + " successfully removed."
+    ELSE
+        remove.nodelink$ = "Link does not exist."
+    END IF
+END FUNCTION
 
 SUB getnodearray (array() AS STRING, search AS STRING)
     IF illegalfile(search) THEN EXIT SUB
@@ -1610,7 +1679,7 @@ SUB getnodearray (array() AS STRING, search AS STRING)
             IF _FILEEXISTS(file$) THEN addtostringarray array(), searchn
         LOOP UNTIL _FILEEXISTS(file$) = 0
     END IF
-    IF global.exactsearch THEN
+    IF global.partialsearch THEN
         DIM AS STRING nodefolders(0), nodefiles(0)
         GetFileList global.nodepath, nodefolders(), nodefiles()
         IF UBOUND(nodefiles) > 0 THEN
@@ -1661,7 +1730,7 @@ FUNCTION getnodecount (arguments AS STRING) 'counts the amount of nodes with a g
     END IF
 END FUNCTION
 
-SUB add.nodelink (arguments AS STRING) 'adds a new node link, but doesn't check if it exists already!
+FUNCTION add.nodelink$ (arguments AS STRING) 'adds a new node link, but doesn't check if it exists already!
     DIM this AS nodelink
     this.target = getargument$(arguments, "target")
     this.name = getargument$(arguments, "name")
@@ -1671,8 +1740,11 @@ SUB add.nodelink (arguments AS STRING) 'adds a new node link, but doesn't check 
     IF set(this.target) AND set(this.name) AND set(this.origin) THEN
         writenodelink "", this
         getmaxnodeid
+        add.nodelink$ = "Link from " + this.origin + " to " + this.target + " successfully added."
+    ELSE
+        add.nodelink$ = "Link could not be added."
     END IF
-END SUB
+END FUNCTION
 
 SUB writenodelink (arguments AS STRING, this AS nodelink) 'writes a nodelink to a given node
     file$ = path$(this.origin)
@@ -1701,7 +1773,7 @@ SUB loadconfig
     global.margin = getargumentv(config$, "margin")
     global.round = getargumentv(config$, "round")
     global.license = getargument$(config$, "license")
-    global.exactsearch = getargumentv(config$, "exactsearch")
+    global.partialsearch = getargumentv(config$, "partialsearch")
     global.scheme = getargument$(config$, "colorscheme")
     global.matchthreshhold = getargumentv(config$, "matchthreshhold")
     global.windowsize = getargumentv(config$, "windowsize")
@@ -1712,7 +1784,7 @@ SUB loadconfig
 END SUB
 
 SUB resetconfig
-    config$ = "round=3;margin=10;padding=6;license=;colorscheme=teal;matchthreshhold=2;exactsearch=-1;windowsize=.5"
+    config$ = "round=3;margin=10;padding=6;license=;colorscheme=teal;matchthreshhold=2;partialsearch=-1;windowsize=.5"
     configfile$ = global.internalpath + "\config.dst"
     freen = FREEFILE
     OPEN configfile$ FOR OUTPUT AS #freen
@@ -1722,7 +1794,7 @@ END SUB
 
 SUB saveconfig
     config$ = "round=" + lst$(global.round) + ";margin=" + lst$(global.margin) + ";padding=" + lst$(global.padding) + ";license=" + global.license
-    config$ = config$ + ";colorscheme=" + global.scheme + ";matchthreshhold=" + lst$(global.matchthreshhold) + ";exactsearch=" + lst$(global.exactsearch) + ";windowsize=" + lst$(global.windowsize)
+    config$ = config$ + ";colorscheme=" + global.scheme + ";matchthreshhold=" + lst$(global.matchthreshhold) + ";partialsearch=" + lst$(global.partialsearch) + ";windowsize=" + lst$(global.windowsize)
     configfile$ = global.internalpath + "\config.dst"
     freen = FREEFILE
     OPEN configfile$ FOR OUTPUT AS #freen
@@ -1824,8 +1896,8 @@ SUB checkglobal (this AS element)
     SELECT CASE this.name
         CASE "colorscheme"
             this.buffer = global.scheme
-        CASE "exactsearch"
-            this.state = global.exactsearch
+        CASE "partialsearch"
+            this.state = global.partialsearch
         CASE "license"
             this.buffer = global.license
         CASE "windowsize"
@@ -1840,8 +1912,8 @@ SUB setglobal (globalname AS STRING, value AS STRING)
             global.scheme = value
             saveconfig
             loadconfig
-        CASE "exactsearch"
-            global.exactsearch = VAL(value)
+        CASE "partialsearch"
+            global.partialsearch = VAL(value)
         CASE "license"
             global.license = value
         CASE "windowsize"

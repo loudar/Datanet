@@ -1,0 +1,7 @@
+type=title;x=margin;y=margin;w=flex;h=25;color=ui;hovercolor=ui;text=Remove node;name=title
+type=input;name=nodetarget;x=prev;y=prevb;w=flex;h=25;color=ui;hovercolor=ui2;style=b;text=Origin:;angle=0;allownumbers=-1;allowtext=-1;allowspecial=0
+type=input;name=nodetarget;x=prev;y=prevb;w=flex;h=25;color=ui;hovercolor=ui2;style=b;text=Link name:;angle=0;allownumbers=-1;allowtext=-1;allowspecial=0
+type=input;name=nodetarget;x=prev;y=prevb;w=flex;h=25;color=ui;hovercolor=ui2;style=b;text=Target:;angle=0;allownumbers=-1;allowtext=-1;allowspecial=0
+type=button;name=save;action=remove.node;x=prev;y=prevb;w=flex;h=25;color=ui;hovercolor=green;style=b;text=Remove node;angle=0
+type=button;x=right;y=bottom;w=flex;h=25;color=ui;hovercolor=ui2;name=quit;style=b;angle=0;text=Quit;action=quit
+type=button;x=prevl;y=bottom;w=flex;h=25;color=ui;hovercolor=ui2;name=back;style=b;angle=0;text=Back;action=view.main
