@@ -1,10 +1,11 @@
-type=title;x=margin;y=margin;w=flex;h=25;color=ui;hovercolor=ui;text=Console;name=title
+type=title;x=margin;y=margin;w=flex;h=25;color=ui;hovercolor=ui;text=Console;name=title;hovertext=This is the current view
 type=input;x=prev;y=prevb;w=flex;h=25;color=ui;hovercolor=ui2;text=Command:;angle=0;allownumbers=-1;allowtext=-1;allowspecial=-1;name=commandline;hovertext=Type your commands here
-type=button;x=prev;y=prevb;w=flex;h=25;color=ui;hovercolor=ui2;style=b;text=New node;angle=0;name=Baddnode;action=add.node
-type=button;x=prevr;y=prev;w=flex;h=25;color=ui;hovercolor=ui2;style=b;text=Delete node;angle=0;name=Bremovenode;action=remove.node
-type=button;x=prevr;y=prev;w=flex;h=25;color=ui;hovercolor=ui2;style=b;text=New link;angle=0;name=Baddlink;action=add.nodelink
-type=button;x=prevr;y=prev;w=flex;h=25;color=ui;hovercolor=ui2;style=b;text=Delete link;angle=0;name=Bremovelink;action=remove.link
-type=list;x=margin;y=prevb;w=full;h=nextt;color=ui;hovercolor=ui;name=nodelist;style=b;content=commandline
-type=time;x=margin;y=b;w=flex;h=25;color=ui;hovercolor=ui;name=clock;style=bf;angle=0;text=Time:;
-type=button;x=right;y=bottom;w=flex;h=25;color=ui;hovercolor=ui2;name=quit;style=b;angle=0;text=Quit;action=quit
-type=button;x=prevl;y=bottom;w=flex;h=25;color=ui;hovercolor=ui2;name=settings;style=b;angle=0;text=Settings;action=view.settings
+type=text;x=margin;y=prevb;w=flex;h=25;color=ui;hovercolor=ui;name=transmit;hovertext=This space is to display status messages
+type=button;x=prev;y=prevb;w=flex;h=25;color=ui;hovercolor=ui2;style=b;text=New node;angle=0;name=Baddnode;action=add.node;hovertext=Adds a new node to the database
+type=button;x=prevr;y=prev;w=flex;h=25;color=ui;hovercolor=ui2;style=b;text=Delete node;angle=0;name=Bremovenode;action=remove.node;hovertext=Deletes an existing node from the database
+type=button;x=prevr;y=prev;w=flex;h=25;color=ui;hovercolor=ui2;style=b;text=New link;angle=0;name=Baddlink;action=add.nodelink;hovertext=Adds a new node link to the database
+type=button;x=prevr;y=prev;w=flex;h=25;color=ui;hovercolor=ui2;style=b;text=Delete link;angle=0;name=Bremovelink;action=remove.nodelink;hovertext=Deletes an existing node link from the database
+type=list;x=margin;y=prevb;w=full;h=nextt;color=ui;hovercolor=ui;name=nodelist;style=b;content=commandline;hovertext=Displays search results based on the commandline
+type=text;x=margin;y=b;w=flex;h=25;color=ui;hovercolor=ui;name=time;style=bf;angle=0;text=Time:;hovertext=Displays the current time
+type=button;x=right;y=bottom;w=flex;h=25;color=ui;hovercolor=ui2;name=quit;style=b;angle=0;text=Quit;action=quit;hovertext=Closes the program
+type=button;x=prevl;y=bottom;w=flex;h=25;color=ui;hovercolor=ui2;name=settings;style=b;angle=0;text=Settings;action=view.settings;hovertext=Opens the settings menu
