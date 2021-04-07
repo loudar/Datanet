@@ -594,6 +594,7 @@ SUB drawelement (this AS element, elementindex AS INTEGER, coord AS rectangle, i
                                 nodecoord2.w = nodesize
                                 nodecoord2.h = nodesize
                                 linkcolor = getlinkcolor~&(linkcount2(), node2, linkcount(), 1, "count")
+
                                 IF linkcount2(node2).name = linkcount(node3).name THEN
                                     IF inbounds(nodecoord2, coord) THEN
                                         LINE (getnodex(centerx, node, distance), getnodey(centery, node, distance))-(getnodex(centerx, node3, distance), getnodey(centery, node3, distance)), linkcolor
@@ -622,14 +623,16 @@ SUB drawelement (this AS element, elementindex AS INTEGER, coord AS rectangle, i
                         ELSE
                             nodecolor = col&(this.color)
                         END IF
-                        linkcolor = getlinkcolor~&(linkcount(), node, linkcount(), 1, "count")
+                        IF node <= UBOUND(linkcount) THEN
+                            linkcolor = getlinkcolor~&(linkcount(), node, linkcount(), 1, "count")
 
-                        LINE (centerx, centery)-(getnodex(centerx, node, distance), getnodey(centery, node, distance)), linkcolor
-                        LINE (nodecoord.x, nodecoord.y)-(nodecoord.x + nodecoord.w, nodecoord.y + nodecoord.h), nodecolor, BF
-                        COLOR nodecolor, col&("t")
-                        _PRINTSTRING (nodecoord.x + nodecoord.w + global.margin, nodecoord.y), linkcount(node).name
+                            LINE (centerx, centery)-(getnodex(centerx, node, distance), getnodey(centery, node, distance)), linkcolor
+                            LINE (nodecoord.x, nodecoord.y)-(nodecoord.x + nodecoord.w, nodecoord.y + nodecoord.h), nodecolor, BF
+                            COLOR nodecolor, col&("t")
+                            _PRINTSTRING (nodecoord.x + nodecoord.w + global.margin, nodecoord.y), linkcount(node).name
+                        END IF
                     END IF
-                LOOP UNTIL node = UBOUND(linkcount)
+                LOOP UNTIL node >= UBOUND(linkcount)
             END IF
 
             LINE (centerx - (nodesize / 2), centery - (nodesize / 2))-(centerx + (nodesize / 2), centery + (nodesize / 2)), this.drawcolor, BF
@@ -703,6 +706,7 @@ FUNCTION getcolorcount (basestring AS STRING)
 END FUNCTION
 
 FUNCTION getlinkcolor~& (array() AS countlist, node AS _UNSIGNED _INTEGER64, comparearray() AS countlist, comparenode AS _UNSIGNED _INTEGER64, attribute AS STRING)
+    IF node > UBOUND(array) OR comparenode > UBOUND(comparearray) THEN getlinkcolor~& = _RGBA(255, 255, 255, 255): EXIT FUNCTION
     SELECT CASE attribute
         CASE "count"
             factor = array(node).count / comparearray(comparenode).count
@@ -1535,9 +1539,9 @@ SUB dothis (arguments AS STRING, recursivecall AS _BYTE) 'program-specific actio
             IF currentview = "node" OR currentview = "nodegraph" THEN
                 elements(gettitleid).text = nodetarget
                 searchnode$ = nodetarget
-                REDIM AS STRING linkarray(0)
+                REDIM _PRESERVE AS STRING linkarray(0)
                 getcombinedlinkarray linkarray(), searchnode$
-                REDIM AS countlist linkcount(0)
+                REDIM _PRESERVE AS countlist linkcount(0)
                 getlinkcounts linkcount(), linkarray(), searchnode$
             END IF
     END SELECT
