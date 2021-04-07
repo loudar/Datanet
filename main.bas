@@ -51,7 +51,7 @@ REDIM SHARED AS STRING linkarray(0)
 'UI
 TYPE element
     AS _BYTE show, acceptinput, allownumbers, allowtext, allowspecial, selected, state, deselect
-    AS STRING x, y, w, h, style, name, text, buffer, type, color, hovercolor, action, angle
+    AS STRING x, y, w, h, style, name, text, buffer, type, color, hovercolor, action, angle, font
     AS STRING view, round, hovertext, padding, url, switchword, group, options
     AS INTEGER sel_start, sel_end, cursor, items, hovertextwait, hoverx, hovery
     AS _UNSIGNED _INTEGER64 scroll
@@ -87,6 +87,11 @@ TYPE countlist
     name AS STRING
     count AS _UNSIGNED _INTEGER64
 END TYPE
+TYPE font
+    name AS STRING
+    handle AS LONG
+END TYPE
+REDIM SHARED font(0) AS font
 
 TYPE rectangle
     AS _FLOAT x, y, w, h
@@ -205,11 +210,14 @@ SUB displaymenu (elementindex AS INTEGER, keyhit AS INTEGER)
     DIM this AS element
     this = elements(elementindex)
 
+    REDIM currentfont AS LONG
+    currentfont = getcurrentfont&(this)
+
     DIM coord AS rectangle
-    getcoord coord, elementindex
+    getcoord coord, elementindex, currentfont
 
     IF this.expand AND expandable(this) THEN
-        expandelement this, elementindex
+        expandelement this, elementindex, currentfont
     END IF
 
     IF mouse.right AND mouseinbounds(coord) THEN
@@ -234,9 +242,9 @@ SUB displayhovertext (this AS element)
     _PRINTSTRING (mouse.x, mouse.y + hoveryoffset), this.hovertext
 END SUB
 
-SUB expandelement (this AS element, elementindex AS INTEGER)
+SUB expandelement (this AS element, elementindex AS INTEGER, currentfont AS LONG)
     DIM coord AS rectangle
-    getcoord coord, elementindex
+    getcoord coord, elementindex, currentfont
     DIM options(0) AS STRING
     getoptionsarray options(), this
 
@@ -292,11 +300,11 @@ SUB opencontext (this AS element)
     this.allowcontextclose = 0
 END SUB
 
-SUB getcoord (coord AS rectangle, elementindex AS INTEGER)
-    coord.x = VAL(getexpos$(elementindex))
-    coord.y = VAL(geteypos$(elementindex))
-    coord.w = VAL(getewidth$(elementindex))
-    coord.h = VAL(geteheight$(elementindex))
+SUB getcoord (coord AS rectangle, elementindex AS INTEGER, currentfont AS LONG)
+    coord.x = VAL(getexpos$(elementindex, currentfont))
+    coord.y = VAL(geteypos$(elementindex, currentfont))
+    coord.w = VAL(getewidth$(elementindex, currentfont))
+    coord.h = VAL(geteheight$(elementindex, currentfont))
 END SUB
 
 SUB displaycontext (this AS element, elementindex AS INTEGER)
@@ -421,6 +429,9 @@ SUB displayelement (elementindex AS INTEGER, keyhit AS INTEGER) 'parses abstract
     DIM invoke AS invoke
     this = elements(elementindex)
 
+    REDIM currentfont AS LONG
+    currentfont = getcurrentfont&(this)
+
     IF active(elementindex) THEN bufferchar = getbufferchar$(this, keyhit)
 
     'general
@@ -455,14 +466,27 @@ SUB displayelement (elementindex AS INTEGER, keyhit AS INTEGER) 'parses abstract
     elementkeyhandling this, elementindex, bufferchar, invoke
 
     DIM coord AS rectangle
-    getcoord coord, elementindex
+    getcoord coord, elementindex, currentfont
 
-    elementmousehandling this, elementindex, invoke, coord
+    elementmousehandling this, elementindex, invoke, coord, currentfont
     IF isexception(this.name) THEN this.buffer = getexceptionvalue$(this.name)
-    drawelement this, elementindex, coord, invoke
+    drawelement this, elementindex, coord, invoke, currentfont
 
     elements(elementindex) = this
 END SUB
+
+FUNCTION getcurrentfont& (this AS element)
+    DIM buffer AS LONG
+    buffer = font_normal
+    IF this.font <> "" AND UBOUND(font) > 0 THEN
+        f = 0: DO: f = f + 1
+            IF font(f).name = this.font THEN
+                buffer = font(f).handle
+            END IF
+        LOOP UNTIL f = UBOUND(font)
+    END IF
+    getcurrentfont& = buffer
+END FUNCTION
 
 FUNCTION isexception (elementname AS STRING)
     SELECT CASE elementname
@@ -477,9 +501,9 @@ FUNCTION getexceptionvalue$ (elementname AS STRING)
     END SELECT
 END FUNCTION
 
-SUB drawelement (this AS element, elementindex AS INTEGER, coord AS rectangle, invoke AS invoke)
+SUB drawelement (this AS element, elementindex AS INTEGER, coord AS rectangle, invoke AS invoke, currentfont AS LONG)
     checkglobal this
-    _FONT font_normal
+    _FONT currentfont
     SELECT CASE this.type
         CASE "button"
             rectangle "x=" + lst$(coord.x) + ";y=" + lst$(coord.y) + ";w=" + lst$(coord.w) + ";h=" + lst$(coord.h) + ";style=" + this.style + ";angle=" + this.angle + ";round=" + this.round, this.drawcolor
@@ -514,7 +538,7 @@ SUB drawelement (this AS element, elementindex AS INTEGER, coord AS rectangle, i
             makegradient this, -1
             drawgradient 1, coord.x, coord.x + coord.w, coord.y, coord.y + coord.h, 0, "h"
         CASE "checkbox"
-            boxsize = _FONTHEIGHT(font_normal) * 0.75
+            boxsize = _FONTHEIGHT(currentfont) * 0.75
             boxoffset = 0
             coord.w = coord.w + boxsize + global.margin
             coord.y = coord.y + global.padding
@@ -524,7 +548,7 @@ SUB drawelement (this AS element, elementindex AS INTEGER, coord AS rectangle, i
             COLOR this.drawcolor, col&("t")
             _PRINTSTRING (coord.x + boxsize + global.margin, coord.y), this.text + " " + switchword$(this.switchword, this.state)
         CASE "radiobutton"
-            boxsize = _FONTHEIGHT(font_normal) * 0.75
+            boxsize = _FONTHEIGHT(currentfont) * 0.75
             boxoffset = 0
             coord.w = coord.w + boxsize + global.margin
             cx = coord.x + (boxsize / 2)
@@ -550,12 +574,12 @@ SUB drawelement (this AS element, elementindex AS INTEGER, coord AS rectangle, i
             coord.y = coord.y + global.padding
             COLOR this.drawcolor, col&("t")
             _PRINTSTRING (coord.x, coord.y), this.text
-            textwidth = LEN(this.text) * _FONTWIDTH(font_normal) + global.margin
+            textwidth = LEN(this.text) * _FONTWIDTH(currentfont) + global.margin
             _PRINTSTRING (coord.x + textwidth + global.sliderwidth + global.margin, coord.y), this.buffer
             val_start = coord.x + textwidth
             val_end = coord.x + textwidth + global.sliderwidth
-            cy = coord.y + (_FONTHEIGHT(font_normal) / 2)
-            circlesize = (_FONTHEIGHT(font_normal) * 0.75) * 0.5
+            cy = coord.y + (_FONTHEIGHT(currentfont) / 2)
+            circlesize = (_FONTHEIGHT(currentfont) * 0.75) * 0.5
             CIRCLE (val_start + (this.value * (val_end - val_start)), cy), circlesize, this.drawcolor, BF
             PAINT (val_start + (this.value * (val_end - val_start)), cy), this.drawcolor, this.drawcolor
             LINE (val_start, cy)-(val_end, cy + 1), this.drawcolor, BF
@@ -594,6 +618,7 @@ SUB drawelement (this AS element, elementindex AS INTEGER, coord AS rectangle, i
                                 nodecoord2.w = nodesize
                                 nodecoord2.h = nodesize
                                 linkcolor = getlinkcolor~&(linkcount2(), node2, linkcount(), 1, "count")
+
                                 IF linkcount2(node2).name = linkcount(node3).name THEN
                                     IF inbounds(nodecoord2, coord) THEN
                                         LINE (getnodex(centerx, node, distance), getnodey(centery, node, distance))-(getnodex(centerx, node3, distance), getnodey(centery, node3, distance)), linkcolor
@@ -613,7 +638,7 @@ SUB drawelement (this AS element, elementindex AS INTEGER, coord AS rectangle, i
                         hitboxmargin = 5
                         nodehitbox.x = nodecoord.x - hitboxmargin
                         nodehitbox.y = nodecoord.y - hitboxmargin
-                        nodehitbox.w = nodesize + hitboxmargin + ((LEN(linkcount(node).name) * _FONTWIDTH(font_normal)) + global.margin)
+                        nodehitbox.w = nodesize + hitboxmargin + ((LEN(linkcount(node).name) * _FONTWIDTH(currentfont)) + global.margin)
                         nodehitbox.h = nodesize + (2 * hitboxmargin)
 
                         IF mouseinbounds(nodehitbox) THEN
@@ -622,14 +647,16 @@ SUB drawelement (this AS element, elementindex AS INTEGER, coord AS rectangle, i
                         ELSE
                             nodecolor = col&(this.color)
                         END IF
-                        linkcolor = getlinkcolor~&(linkcount(), node, linkcount(), 1, "count")
+                        IF node <= UBOUND(linkcount) THEN
+                            linkcolor = getlinkcolor~&(linkcount(), node, linkcount(), 1, "count")
 
-                        LINE (centerx, centery)-(getnodex(centerx, node, distance), getnodey(centery, node, distance)), linkcolor
-                        LINE (nodecoord.x, nodecoord.y)-(nodecoord.x + nodecoord.w, nodecoord.y + nodecoord.h), nodecolor, BF
-                        COLOR nodecolor, col&("t")
-                        _PRINTSTRING (nodecoord.x + nodecoord.w + global.margin, nodecoord.y), linkcount(node).name
+                            LINE (centerx, centery)-(getnodex(centerx, node, distance), getnodey(centery, node, distance)), linkcolor
+                            LINE (nodecoord.x, nodecoord.y)-(nodecoord.x + nodecoord.w, nodecoord.y + nodecoord.h), nodecolor, BF
+                            COLOR nodecolor, col&("t")
+                            _PRINTSTRING (nodecoord.x + nodecoord.w + global.margin, nodecoord.y), linkcount(node).name
+                        END IF
                     END IF
-                LOOP UNTIL node = UBOUND(linkcount)
+                LOOP UNTIL node >= UBOUND(linkcount)
             END IF
 
             LINE (centerx - (nodesize / 2), centery - (nodesize / 2))-(centerx + (nodesize / 2), centery + (nodesize / 2)), this.drawcolor, BF
@@ -643,16 +670,16 @@ SUB drawelement (this AS element, elementindex AS INTEGER, coord AS rectangle, i
                     nodecount = getnodecount(searchnode$)
                     DIM AS STRING nodearray(0)
                     getnodearray nodearray(), searchnode$
-                    displaylistarray this, nodearray(), coord
+                    displaylistarray this, nodearray(), coord, currentfont
                 CASE "linklist"
                     searchnode$ = elements(gettitleid).text
                     DIM AS STRING linkarray(0)
                     getlinkarray linkarray(), searchnode$
-                    displaylistarray this, nodearray(), coord
+                    displaylistarray this, nodearray(), coord, currentfont
             END SELECT
             rectangle "x=" + lst$(coord.x - (2 * global.padding)) + ";y=" + lst$(coord.y - global.padding) + ";w=" + lst$(coord.w) + ";h=" + lst$(coord.h) + ";style=" + this.style + ";angle=" + this.angle + ";round=" + this.round, this.drawcolor
     END SELECT
-    displayselection this, elementindex, coord
+    displayselection this, elementindex, coord, currentfont
 END SUB
 
 SUB checkforspecialtext (this AS element)
@@ -703,6 +730,7 @@ FUNCTION getcolorcount (basestring AS STRING)
 END FUNCTION
 
 FUNCTION getlinkcolor~& (array() AS countlist, node AS _UNSIGNED _INTEGER64, comparearray() AS countlist, comparenode AS _UNSIGNED _INTEGER64, attribute AS STRING)
+    IF node > UBOUND(array) OR comparenode > UBOUND(comparearray) THEN getlinkcolor~& = _RGBA(255, 255, 255, 255): EXIT FUNCTION
     SELECT CASE attribute
         CASE "count"
             factor = array(node).count / comparearray(comparenode).count
@@ -812,7 +840,7 @@ SUB getlinkarray (array() AS STRING, target AS STRING)
     CLOSE #freen
 END SUB
 
-SUB displaylistarray (this AS element, array() AS STRING, coord AS rectangle)
+SUB displaylistarray (this AS element, array() AS STRING, coord AS rectangle, currentfont AS LONG)
     IF UBOUND(array) = 0 THEN EXIT SUB
 
     IF this.scroll > UBOUND(array) THEN this.scroll = UBOUND(array)
@@ -820,11 +848,11 @@ SUB displaylistarray (this AS element, array() AS STRING, coord AS rectangle)
 
     n = this.scroll
     DO: n = n + 1
-        lineheight = global.margin + _FONTHEIGHT(font_normal)
+        lineheight = global.margin + _FONTHEIGHT(currentfont)
         listitemy = coord.y + global.padding + (lineheight * (n - 1))
 
-        IF listitemy + _FONTHEIGHT(font_normal) < coord.y + coord.h THEN
-            IF mouse.x > coord.x - (2 * global.padding) AND mouse.x < coord.x + coord.w - (2 * global.padding) AND mouse.y > listitemy AND mouse.y < listitemy + _FONTHEIGHT(font_normal) THEN
+        IF listitemy + _FONTHEIGHT(currentfont) < coord.y + coord.h THEN
+            IF mouse.x > coord.x - (2 * global.padding) AND mouse.x < coord.x + coord.w - (2 * global.padding) AND mouse.y > listitemy AND mouse.y < listitemy + _FONTHEIGHT(currentfont) THEN
                 IF mouse.left THEN clicklistitem this, array(), n
                 COLOR col&("seltext"), col&("t")
                 IF n = 1 THEN
@@ -848,7 +876,7 @@ SUB displaylistarray (this AS element, array() AS STRING, coord AS rectangle)
             END IF
             ERASE listitems 'clean up array, will otherwise produce errors when dimming again
         END IF
-    LOOP UNTIL n = UBOUND(array) OR (listitemy + _FONTHEIGHT(font_normal) >= coord.y - global.padding + coord.h)
+    LOOP UNTIL n = UBOUND(array) OR (listitemy + _FONTHEIGHT(currentfont) >= coord.y - global.padding + coord.h)
     this.items = n - this.scroll
 END SUB
 
@@ -876,18 +904,18 @@ SUB getlistitems (array() AS STRING, sourcearray() AS STRING, index AS INTEGER, 
     END SELECT
 END SUB
 
-SUB displayselection (this AS element, elementindex AS INTEGER, coord AS rectangle)
+SUB displayselection (this AS element, elementindex AS INTEGER, coord AS rectangle, currentfont AS LONG)
     IF textselectable(this) AND active(elementindex) THEN
         IF longselection(this) THEN
             COLOR col&("seltext"), col&("selected")
             minx = min(this.sel_start, this.sel_end)
             maxx = max(this.sel_start, this.sel_end)
-            _PRINTSTRING (coord.x + (_FONTWIDTH(font_normal) * (LEN(this.text) + minx)), coord.y), MID$(this.buffer, minx, maxx - minx + 1)
+            _PRINTSTRING (coord.x + (_FONTWIDTH(currentfont) * (LEN(this.text) + minx)), coord.y), MID$(this.buffer, minx, maxx - minx + 1)
         ELSE
             IF (TIMER - mouse.lefttime) MOD 2 = 0 AND typable(this) THEN
                 cursoroffset = -1
-                cursorx = coord.x + (_FONTWIDTH(font_normal) * (LEN(this.text) + this.cursor + 1)) + cursoroffset
-                LINE (cursorx, coord.y - 2)-(cursorx, coord.y + _FONTHEIGHT(font_normal) + 2), this.drawcolor, BF
+                cursorx = coord.x + (_FONTWIDTH(currentfont) * (LEN(this.text) + this.cursor + 1)) + cursoroffset
+                LINE (cursorx, coord.y - 2)-(cursorx, coord.y + _FONTHEIGHT(currentfont) + 2), this.drawcolor, BF
             END IF
         END IF
     END IF
@@ -957,7 +985,7 @@ FUNCTION getmaxelement (viewtogetfrom AS STRING)
     getmaxelement = buffer
 END FUNCTION
 
-SUB elementmousehandling (this AS element, elementindex AS INTEGER, invoke AS invoke, coord AS rectangle)
+SUB elementmousehandling (this AS element, elementindex AS INTEGER, invoke AS invoke, coord AS rectangle, currentfont AS LONG)
     IF this.hovertextwait = 0 THEN this.hovertextwait = 1
     'IF NOT active(elementindex) AND this.expand THEN this.expand = 0
     IF mouseinbounds(coord) THEN
@@ -983,7 +1011,7 @@ SUB elementmousehandling (this AS element, elementindex AS INTEGER, invoke AS in
                 ELSEIF expandable(this) AND this.statelock = 0 THEN
                     uicall "expand", this, elementindex
                 ELSEIF this.type = "slider" AND NOT expanded THEN
-                    textwidth = LEN(this.text) * _FONTWIDTH(font_normal) + global.margin
+                    textwidth = LEN(this.text) * _FONTWIDTH(currentfont) + global.margin
                     val_start = coord.x + textwidth
                     val_end = coord.x + textwidth + global.sliderwidth
                     IF mouse.x > val_start AND mouse.x < val_end THEN
@@ -1001,10 +1029,10 @@ SUB elementmousehandling (this AS element, elementindex AS INTEGER, invoke AS in
         END IF
 
         IF textselectable(this) THEN
-            sel_leftbound = coord.x + ((LEN(this.text) + 1) * _FONTWIDTH(font_normal))
-            sel_rightbound = coord.x + ((LEN(this.text) + 1 + LEN(this.buffer)) * _FONTWIDTH(font_normal))
+            sel_leftbound = coord.x + ((LEN(this.text) + 1) * _FONTWIDTH(currentfont))
+            sel_rightbound = coord.x + ((LEN(this.text) + 1 + LEN(this.buffer)) * _FONTWIDTH(currentfont))
             IF mouse.x > sel_leftbound AND mouse.x < sel_rightbound AND mouse.left AND this.action = "" THEN
-                charcount = (sel_rightbound - sel_leftbound) / _FONTWIDTH(font_normal)
+                charcount = (sel_rightbound - sel_leftbound) / _FONTWIDTH(currentfont)
                 mousehoverchar = INT((((mouse.x - sel_leftbound) / (sel_rightbound - sel_leftbound)) * charcount) + 0.5)
 
                 IF mouse.lefttimedif > internal.setting.doubleclickspeed THEN
@@ -1388,15 +1416,15 @@ FUNCTION getcurrentinputvalues$ (killbuffer AS _BYTE)
     getcurrentinputvalues$ = buffer
 END FUNCTION
 
-FUNCTION getexpos$ (e AS INTEGER)
+FUNCTION getexpos$ (e AS INTEGER, currentfont AS LONG)
     IF (elements(e).x = "previousright" OR elements(e).x = "prevr" OR elements(e).x = "flex") AND e > 1 THEN
-        getexpos$ = lst$(VAL(getexpos$(e - 1)) + VAL(getewidth$(e - 1)) + global.margin)
+        getexpos$ = lst$(VAL(getexpos$(e - 1, currentfont)) + VAL(getewidth$(e - 1, currentfont)) + global.margin)
     ELSEIF (elements(e).x = "previousleft" OR elements(e).x = "prevl" OR elements(e).x = "-flex") AND e > 1 THEN
-        getexpos$ = lst$(VAL(getexpos$(e - 1)) - VAL(getewidth$(e)) - global.margin)
+        getexpos$ = lst$(VAL(getexpos$(e - 1, currentfont)) - VAL(getewidth$(e, currentfont)) - global.margin)
     ELSEIF (elements(e).x = "previous" OR elements(e).x = "p" OR elements(e).x = "prev") AND e > 1 THEN
-        getexpos$ = getexpos$(e - 1)
+        getexpos$ = getexpos$(e - 1, currentfont)
     ELSEIF (elements(e).x = "right" OR elements(e).x = "r") THEN
-        getexpos$ = lst$(_WIDTH(0) - VAL(getewidth$(e)) - global.margin)
+        getexpos$ = lst$(_WIDTH(0) - VAL(getewidth$(e, currentfont)) - global.margin)
     ELSEIF (elements(e).x = "margin" OR elements(e).x = "m" OR elements(e).x = "left" OR elements(e).x = "l" OR elements(e).x = "0") THEN
         getexpos$ = lst$(global.margin)
     ELSE
@@ -1404,17 +1432,17 @@ FUNCTION getexpos$ (e AS INTEGER)
     END IF
 END FUNCTION
 
-FUNCTION geteypos$ (e AS INTEGER)
+FUNCTION geteypos$ (e AS INTEGER, currentfont AS LONG)
     IF (elements(e).y = "previousbottom" OR elements(e).y = "prevb" OR elements(e).y = "pb" OR elements(e).y = "flex") AND e > 1 THEN
-        geteypos$ = lst$(VAL(geteypos$(e - 1)) + VAL(geteheight$(e - 1)) + (SGN(VAL(geteheight$(e - 1))) * global.margin))
+        geteypos$ = lst$(VAL(geteypos$(e - 1, currentfont)) + VAL(geteheight$(e - 1, currentfont)) + (SGN(VAL(geteheight$(e - 1, currentfont))) * global.margin))
     ELSEIF (elements(e).y = "previoustop" OR elements(e).y = "prevt" OR elements(e).y = "pt" OR elements(e).y = "-flex") AND e > 1 THEN
-        geteypos$ = lst$(VAL(geteypos$(e - 1)) - VAL(geteheight$(e)) - global.margin)
+        geteypos$ = lst$(VAL(geteypos$(e - 1, currentfont)) - VAL(geteheight$(e, currentfont)) - global.margin)
     ELSEIF (elements(e).y = "nexttop" OR elements(e).y = "nextt" OR elements(e).y = "nt") AND e < UBOUND(elements) THEN
-        geteypos$ = lst$(VAL(geteypos$(e + 1)) - VAL(geteheight$(e)) - global.margin)
+        geteypos$ = lst$(VAL(geteypos$(e + 1, currentfont)) - VAL(geteheight$(e, currentfont)) - global.margin)
     ELSEIF (elements(e).y = "previous" OR elements(e).y = "p" OR elements(e).y = "prev") AND e > 1 THEN
-        geteypos$ = geteypos$(e - 1)
+        geteypos$ = geteypos$(e - 1, currentfont)
     ELSEIF (elements(e).y = "bottom" OR elements(e).y = "b") THEN
-        geteypos$ = lst$(_HEIGHT(0) - VAL(geteheight$(e)) - global.margin)
+        geteypos$ = lst$(_HEIGHT(0) - VAL(geteheight$(e, currentfont)) - global.margin)
     ELSEIF (elements(e).y = "margin" OR elements(e).y = "m" OR elements(e).y = "top" OR elements(e).y = "t" OR elements(e).y = "0") THEN
         geteypos$ = lst$(global.margin)
     ELSE
@@ -1422,21 +1450,21 @@ FUNCTION geteypos$ (e AS INTEGER)
     END IF
 END FUNCTION
 
-FUNCTION getewidth$ (e AS INTEGER)
+FUNCTION getewidth$ (e AS INTEGER, currentfont AS LONG)
     IF elements(e).w = "flex" OR elements(e).w = "f" THEN 'you would normally want this one for text-based elements
         IF elements(e).type = "slider" THEN
-            getewidth$ = lst$(VAL(elements(e).w) + (_FONTWIDTH * (LEN(elements(e).text) + 2 + LEN(elements(e).buffer))) + (2 * global.padding) + global.margin + global.sliderwidth)
+            getewidth$ = lst$(VAL(elements(e).w) + (_FONTWIDTH(currentfont) * (LEN(elements(e).text) + 1 + SGN(LEN(elements(e).buffer)) + LEN(elements(e).buffer))) + 1 + (2 * global.padding) + global.margin + global.sliderwidth)
         ELSE
-            getewidth$ = lst$(VAL(elements(e).w) + (_FONTWIDTH * (LEN(elements(e).text) + 2 + LEN(elements(e).buffer))) + (2 * global.padding))
+            getewidth$ = lst$(VAL(elements(e).w) + (_FONTWIDTH(currentfont) * (LEN(elements(e).text) + 1 + SGN(LEN(elements(e).buffer)) + LEN(elements(e).buffer))) + 1 + (2 * global.padding))
         END IF
     ELSEIF elements(e).w = "full" THEN
-        getewidth$ = lst$(_WIDTH(0) - VAL(getexpos$(e)) - global.margin)
+        getewidth$ = lst$(_WIDTH(0) - VAL(getexpos$(e, currentfont)) - global.margin)
     ELSE
         getewidth$ = elements(e).w
     END IF
 END FUNCTION
 
-FUNCTION geteheight$ (e AS INTEGER)
+FUNCTION geteheight$ (e AS INTEGER, currentfont AS LONG)
     IF elements(e).type = "title" OR elements(e).type = "text" THEN
         IF elements(e).text = "" AND elements(e).buffer = "" THEN
             geteheight$ = "0": EXIT FUNCTION
@@ -1446,7 +1474,7 @@ FUNCTION geteheight$ (e AS INTEGER)
     IF elements(e).h = "0" THEN
         geteheight$ = lst$(_FONTHEIGHT(font_normal) + (2 * global.padding))
     ELSEIF (elements(e).h = "nextt" OR elements(e).h = "next.top" OR elements(e).h = "nt") AND e < UBOUND(elements) THEN
-        geteheight$ = lst$(VAL(geteypos$(e + 1)) - (2 * global.margin) - VAL(geteypos$(e)))
+        geteheight$ = lst$(VAL(geteypos$(e + 1, currentfont)) - (2 * global.margin) - VAL(geteypos$(e, currentfont)))
     ELSE
         geteheight$ = elements(e).h
     END IF
@@ -1535,9 +1563,9 @@ SUB dothis (arguments AS STRING, recursivecall AS _BYTE) 'program-specific actio
             IF currentview = "node" OR currentview = "nodegraph" THEN
                 elements(gettitleid).text = nodetarget
                 searchnode$ = nodetarget
-                REDIM AS STRING linkarray(0)
+                REDIM _PRESERVE AS STRING linkarray(0)
                 getcombinedlinkarray linkarray(), searchnode$
-                REDIM AS countlist linkcount(0)
+                REDIM _PRESERVE AS countlist linkcount(0)
                 getlinkcounts linkcount(), linkarray(), searchnode$
             END IF
     END SELECT
@@ -1778,6 +1806,7 @@ SUB loadconfig
     global.matchthreshhold = getargumentv(config$, "matchthreshhold")
     global.windowsize = getargumentv(config$, "windowsize")
     loadcolors global.scheme
+    loadfonts
     IF checkLicense(_INFLATE$(global.license)) = 0 THEN setlicense "", 0: saveconfig
     IF global.license <> "" THEN global.licensestatus = -1
     setwindow _DESKTOPWIDTH * global.windowsize, _DESKTOPHEIGHT * global.windowsize
@@ -1803,12 +1832,43 @@ SUB saveconfig
 END SUB
 
 SUB loadfonts
+    REDIM AS STRING filedata(0), schemefonts, fontname
+    REDIM _PRESERVE font(0) AS font
+    schemefonts = global.internalpath + "\schemes\" + global.scheme + ".fonts"
+    IF _FILEEXISTS(schemefonts) THEN
+        getfilearray filedata(), schemefonts
+        IF UBOUND(filedata) > 0 THEN
+            index = 0: DO: index = index + 1
+                fontname = getargument$(filedata(index), "name")
+                IF fontname = "" THEN fontname = filedata(index)
+                REDIM testfont(4) AS STRING
+                testfont(1) = "C:\Windows\Fonts\" + fontname + ".ttf"
+                testfont(2) = "C:\Windows\Fonts\" + fontname + ".otf"
+                testfont(3) = global.internalpath + "\fonts\" + fontname + ".ttf"
+                testfont(4) = global.internalpath + "\fonts\" + fontname + ".otf"
+                tf = 0: DO: tf = tf + 1
+                    IF _FILEEXISTS(testfont(tf)) THEN
+                        addfont fontname, testfont(tf)
+                        tf = 4
+                    END IF
+                LOOP UNTIL tf = 4
+            LOOP UNTIL index = UBOUND(filedata)
+        END IF
+    END IF
+
     'fontr$ = "C:\Windows\Fonts\consola.ttf"
     fontr$ = "internal\fonts\PTMono-Regular.ttf" 'replace with file loaded from config file
     fonteb$ = "internal\fonts\OpenSans-ExtraBold.ttf"
     font_normal = _LOADFONT(fontr$, 16, "MONOSPACE")
     font_big = _LOADFONT(fonteb$, 48)
     _FONT font_normal
+END SUB
+
+SUB addfont (fontname AS STRING, fontfile AS STRING)
+    REDIM _PRESERVE font(UBOUND(font) + 1) AS font
+    i = UBOUND(font)
+    font(i).name = fontname
+    font(i).handle = _LOADFONT(fontfile, 16, "MONOSPACE")
 END SUB
 
 SUB loadui
@@ -1869,6 +1929,7 @@ SUB loadui
                             elements(eub).switchword = getargument$(uielement$, "switchword")
                             elements(eub).group = getargument$(uielement$, "group")
                             elements(eub).options = getargument$(uielement$, "options")
+                            elements(eub).font = getargument$(uielement$, "font")
                             elements(eub).selected = 0
 
                             checkglobal elements(eub)
